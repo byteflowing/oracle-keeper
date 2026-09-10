@@ -116,9 +116,25 @@ compose 文件、拉新镜像重启。PR 只跑测试，不部署。
    无需逐仓配置：`ORACLE_HOST`（VM 公网 IP）、`ORACLE_USER`（SSH 用户，需在
    docker 组）、`ORACLE_SSH_KEY`（私钥完整内容）、`ORACLE_SSH_PORT`（可选，默认 22）。
    个别仓库要指向不同机器时，在仓库层配同名 secret 覆盖（仓库 > 组织）。
-2. VM 上：SSH 用户 `sudo usermod -aG docker <user>`；ghcr 包私有则先
+2. 生成部署专用密钥（一次性；不要复用日常个人密钥）：
+
+   ```bash
+   # 本地生成 ED25519 密钥对，passphrase 留空（CI 无法交互输入）
+   ssh-keygen -t ed25519 -C "gha-deploy/oracle-keeper" -f ~/.ssh/oracle_keeper_deploy
+
+   # 公钥装到 VM 的 ORACLE_USER 下
+   ssh-copy-id -i ~/.ssh/oracle_keeper_deploy.pub <user>@<vm-ip>
+
+   # 验证免密 + docker 权限
+   ssh -i ~/.ssh/oracle_keeper_deploy <user>@<vm-ip> 'docker ps >/dev/null && echo ok'
+
+   # 私钥完整内容（含 BEGIN/END 行）拷去填 ORACLE_SSH_KEY secret
+   pbcopy < ~/.ssh/oracle_keeper_deploy   # macOS；Linux 用 xclip 或 cat 后手动复制
+   ```
+
+3. VM 上：SSH 用户 `sudo usermod -aG docker <user>`；ghcr 包私有则先
    `docker login ghcr.io`（PAT 勾 read:packages），包公开可跳过。
-3. VM 安全组放行 SSH 端口（GitHub 托管 runner 出口 IP 段很广，无法精确白名单，
+4. VM 安全组放行 SSH 端口（GitHub 托管 runner 出口 IP 段很广，无法精确白名单，
    建议直接对 0.0.0.0 放行 22 并依赖密钥认证，或改用自托管 runner）。
 
 首次部署会在 VM 的 `~/oracle-keeper` 生成 `.env`（从 `.env.example` 复制），之后
