@@ -9,13 +9,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// loadForTest points configx at an empty config file: configx requires a
-// config file to exist, and an empty one means all values come from default
-// tags and env overrides.
+// loadForTest points configx at a minimal config file: configx requires a
+// config file to exist, and env overrides only apply to keys the file (or a
+// default tag) registers — so the file mirrors the shipped config.example.yaml
+// structure for the env-driven fields (empty values).
 func loadForTest(t *testing.T) (*Config, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("# empty test config\n"), 0o644); err != nil {
+	content := `# test config
+schedule:
+  spec: ""
+net:
+  sources: []
+db:
+  driver: ""
+  port: 0
+  user: ""
+  password: ""
+  db_name: ""
+  sqlite_path: ""
+  table: "keeper_orders"
+  op_cron: "@every 20s"
+  max_rows: 1000000
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
 	t.Setenv("ORACLE_KEEPER_CONFIG", path)
@@ -51,6 +68,12 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, uint64(2048), cfg.Disk.MinFreeMB)
 	require.True(t, cfg.Disk.RetainFiles)
 	require.InDelta(t, 20, cfg.Disk.PurgePercent, 0)
+
+	require.Empty(t, cfg.DB.Driver) // empty = DB workload off
+	require.Equal(t, "host.docker.internal", cfg.DB.Host)
+	require.Equal(t, "keeper_orders", cfg.DB.Table)
+	require.Equal(t, "@every 20s", cfg.DB.OpCron)
+	require.Equal(t, 1000000, cfg.DB.MaxRows)
 }
 
 func TestLoadEnvOverrides(t *testing.T) {
@@ -58,6 +81,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("ORACLE_KEEPER_CPU_BURN_DURATION", "90s")
 	t.Setenv("ORACLE_KEEPER_SCHEDULE_JITTER_MINUTES", "0")
 	t.Setenv("ORACLE_KEEPER_DISK_ROOTS", "/mnt/root-tmp,/mnt/data-tmp")
+	t.Setenv("ORACLE_KEEPER_SCHEDULE_SPEC", "0 4-8 * * *")
+	t.Setenv("ORACLE_KEEPER_DB_DRIVER", "mysql")
+	t.Setenv("ORACLE_KEEPER_DB_USER", "keeper")
+	t.Setenv("ORACLE_KEEPER_DB_PASSWORD", "secret")
+	t.Setenv("ORACLE_KEEPER_DB_DB_NAME", "keeperdb")
+	t.Setenv("ORACLE_KEEPER_DB_PORT", "3307")
 
 	cfg, err := loadForTest(t)
 	require.NoError(t, err)
@@ -65,6 +94,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	require.Equal(t, 90*time.Second, cfg.CPU.BurnDuration)
 	require.Equal(t, 0, cfg.Schedule.JitterMinutes)
 	require.Equal(t, []string{"/mnt/root-tmp", "/mnt/data-tmp"}, cfg.Disk.Roots)
+	require.Equal(t, "0 4-8 * * *", cfg.Schedule.Spec)
+	require.Equal(t, "mysql", cfg.DB.Driver)
+	require.Equal(t, "keeper", cfg.DB.User)
+	require.Equal(t, "secret", cfg.DB.Password)
+	require.Equal(t, "keeperdb", cfg.DB.DBName)
+	require.Equal(t, 3307, cfg.DB.Port)
 }
 
 func TestLoadRejectsInvalid(t *testing.T) {
@@ -77,6 +112,12 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{name: "per-host cap missing with budget", env: map[string]string{"ORACLE_KEEPER_NET_MAX_PER_HOST_MB": "0"}},
 		{name: "negative write pass", env: map[string]string{"ORACLE_KEEPER_DISK_WRITE_MB": "-1"}},
 		{name: "purge percent out of range", env: map[string]string{"ORACLE_KEEPER_DISK_PURGE_PERCENT": "120"}},
+		{name: "db driver unknown", env: map[string]string{"ORACLE_KEEPER_DB_DRIVER": "oracle"}},
+		{name: "db mysql missing user", env: map[string]string{
+			"ORACLE_KEEPER_DB_DRIVER":  "mysql",
+			"ORACLE_KEEPER_DB_DB_NAME": "keeper",
+		}},
+		{name: "db sqlite missing path", env: map[string]string{"ORACLE_KEEPER_DB_DRIVER": "sqlite"}},
 		{name: "interval max below min", env: map[string]string{
 			"ORACLE_KEEPER_SCHEDULE_INTERVAL_MIN": "60m",
 			"ORACLE_KEEPER_SCHEDULE_INTERVAL_MAX": "30m",

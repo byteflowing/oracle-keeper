@@ -9,7 +9,8 @@ schedule:
   # 1) 随机间隔（默认，spec 留空）：每轮结束后随机 interval_min..interval_max 再跑下一轮，
   #    不与时钟整点对齐、无固定周期，避免 "每小时整点爆发" 的时间指纹
   # 2) 固定 cron（spec 非空）：经典 5 字段表达式，可预期但指纹明显，仅在需要确定性时使用
-  # spec: ""
+  # 注意：此键必须在文件中出现（哪怕是空串），环境变量覆盖才会生效
+  spec: ""
   # interval_min: 48m
   # interval_max: 72m
   # cron 时区（固定 cron 模式用）
@@ -47,7 +48,8 @@ net:
   # 单个下载请求超时
   # request_timeout: 5m
   # 覆盖内置下载源，格式 "name=url" 逗号分隔；URL 含 %d 表示按字节数参数化
-  # sources: []
+  # 键需在文件中出现（空列表即可），环境变量覆盖才会生效
+  sources: []
 
 disk:
   # 每轮临时目录的父目录。默认单盘：所有文件都在 /data/oracle-keeper 一个目录里；
@@ -70,3 +72,20 @@ disk:
 log:
   # level: info
   # format: json
+
+# 小业务数据库模拟（每分钟几笔随机增删改查，订单表形态，行数上限 100 万）。
+# db 段的键必须在文件中出现（空值即可），环境变量 ORACLE_KEEPER_DB_* 覆盖才会生效；
+# driver 留空 = 功能整体关闭。
+db:
+  driver: ""
+  # mysql/postgres 连接（容器访问同机 MySQL 用 host.docker.internal，compose 已映射）
+  host: "host.docker.internal"
+  port: 0
+  user: ""
+  password: ""
+  db_name: ""
+  # driver=sqlite 时的数据库文件路径
+  sqlite_path: ""
+  table: "keeper_orders"
+  op_cron: "@every 20s"
+  max_rows: 1000000

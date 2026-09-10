@@ -25,6 +25,9 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # 让容器内 DB_HOST=host.docker.internal 解析到宿主机（访问同机 MySQL 用）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       # 留空 SPEC = 随机间隔模式（默认，反指纹）：每轮结束后随机 48-72 分钟再跑下一轮。
@@ -44,6 +47,15 @@ services:
       - ORACLE_KEEPER_DISK_WRITE_MB=${ORACLE_KEEPER_DISK_WRITE_MB:-256}
       - ORACLE_KEEPER_DISK_RETAIN_FILES=${ORACLE_KEEPER_DISK_RETAIN_FILES:-true}
       - ORACLE_KEEPER_DISK_PURGE_PERCENT=${ORACLE_KEEPER_DISK_PURGE_PERCENT:-20}
+      # ---- 小业务数据库模拟（DB_DRIVER 留空 = 关闭）----
+      - ORACLE_KEEPER_DB_DRIVER=${ORACLE_KEEPER_DB_DRIVER:-}
+      - ORACLE_KEEPER_DB_HOST=${ORACLE_KEEPER_DB_HOST:-host.docker.internal}
+      - ORACLE_KEEPER_DB_PORT=${ORACLE_KEEPER_DB_PORT:-3306}
+      - ORACLE_KEEPER_DB_USER=${ORACLE_KEEPER_DB_USER:-}
+      - ORACLE_KEEPER_DB_PASSWORD=${ORACLE_KEEPER_DB_PASSWORD:-}
+      - ORACLE_KEEPER_DB_DB_NAME=${ORACLE_KEEPER_DB_DB_NAME:-}
+      - ORACLE_KEEPER_DB_TABLE=${ORACLE_KEEPER_DB_TABLE:-keeper_orders}
+      - ORACLE_KEEPER_DB_MAX_ROWS=${ORACLE_KEEPER_DB_MAX_ROWS:-1000000}
       - ORACLE_KEEPER_LOG_LEVEL=${ORACLE_KEEPER_LOG_LEVEL:-info}
     volumes:
       # 临时文件根目录：所有文件都在这一个目录里，按模式轮末清理或保留至高水位

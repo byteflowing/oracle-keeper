@@ -32,6 +32,7 @@ type Config struct {
 	Mem      *MemConfig
 	Net      *NetConfig
 	Disk     *DiskConfig
+	DB       *DBConfig
 	Log      *logging.Config
 }
 
@@ -134,6 +135,35 @@ type DiskConfig struct {
 	PurgePercent float64 `default:"20"`
 }
 
+// DBConfig drives the simulated small-business workload: a few random CRUD
+// operations per minute against a keeper-owned orders-like table, so the box
+// looks like it hosts a real little service between the hourly keep-alive
+// cycles. Empty Driver disables the component entirely.
+type DBConfig struct {
+	// Driver selects the database: mysql | postgres | sqlite. Empty (the
+	// default) disables the DB workload.
+	Driver string
+	// Host / Port / User / Password / DBName form the mysql or postgres
+	// connection. Port 0 means the driver default (3306 / 5432). For a DB
+	// on the same host as the container use host.docker.internal (the
+	// compose file maps it to the host gateway).
+	Host     string `default:"host.docker.internal"`
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	// SQLitePath is the database file when Driver=sqlite.
+	SQLitePath string
+	// Table is the workload table name (created via AutoMigrate).
+	Table string `default:"keeper_orders"`
+	// OpCron paces the workload ticks; each tick performs 1-3 random
+	// operations. The default is ~3 ticks per minute.
+	OpCron string `default:"@every 20s"`
+	// MaxRows caps the table size: at 90% the workload deletes oldest rows
+	// (in batches) until 70%, then resumes inserts.
+	MaxRows int `default:"1000000"`
+}
+
 // Load reads config from the standard configx locations (env > file >
 // defaults). See the configx package doc for the resolution order.
 func Load() (*Config, error) {
@@ -205,6 +235,23 @@ func (c *Config) validate() error {
 	}
 	if c.Disk.PurgePercent <= 0 || c.Disk.PurgePercent > 100 {
 		return fmt.Errorf("disk.purge_percent must be in (0,100], got %v", c.Disk.PurgePercent)
+	}
+	if db := c.DB; db.Driver != "" {
+		switch db.Driver {
+		case "mysql", "postgres":
+			if db.User == "" || db.DBName == "" {
+				return fmt.Errorf("db.user and db.db_name are required when db.driver=%q", db.Driver)
+			}
+		case "sqlite":
+			if db.SQLitePath == "" {
+				return fmt.Errorf("db.sqlite_path is required when db.driver=sqlite")
+			}
+		default:
+			return fmt.Errorf("db.driver must be mysql, postgres, or sqlite, got %q", db.Driver)
+		}
+		if db.MaxRows <= 0 {
+			return fmt.Errorf("db.max_rows must be > 0, got %d", db.MaxRows)
+		}
 	}
 	return nil
 }

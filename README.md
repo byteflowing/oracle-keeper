@@ -100,6 +100,14 @@ x86 实例同样可用（构建时自动交叉编译，无需改 Dockerfile）�
 | `ORACLE_KEEPER_DISK_MIN_FREE_MB` | `2048` | 盘空闲低于此值跳过该盘 |
 | `ORACLE_KEEPER_DISK_RETAIN_FILES` | `true` | 保留模式：文件轮末不删除，高水位才清理 |
 | `ORACLE_KEEPER_DISK_PURGE_PERCENT` | `20` | 阈值双角色：基准占用（不含保活文件）≥ 此值 → 本轮不生成任何文件（下载直读直弃）；总占用 ≥ 此值 → 下轮开始前清空保留的 run 目录 |
+| `ORACLE_KEEPER_DB_DRIVER` | 空 | 小业务数据库模拟：`mysql`（也支持 `postgres`/`sqlite`），空 = 关闭 |
+| `ORACLE_KEEPER_DB_HOST` | `host.docker.internal` | MySQL 主机（同机 MySQL 用这个，compose 已映射到宿主机） |
+| `ORACLE_KEEPER_DB_PORT` | `0`（=驱动默认 3306） | 端口 |
+| `ORACLE_KEEPER_DB_USER` / `ORACLE_KEEPER_DB_PASSWORD` | 空 | MySQL 账号（只需要单库增删改查 + 建表权限） |
+| `ORACLE_KEEPER_DB_DB_NAME` | 空 | 库名 |
+| `ORACLE_KEEPER_DB_TABLE` | `keeper_orders` | 订单表表名（自动建表） |
+| `ORACLE_KEEPER_DB_OP_CRON` | `@every 20s` | 节奏：每 tick 随机 1-3 个增删改查 |
+| `ORACLE_KEEPER_DB_MAX_ROWS` | `1000000` | 行数上限：90% 起转删除、回落到 70% |
 
 调参建议：
 
@@ -149,6 +157,36 @@ compose 文件、拉新镜像重启。PR 只跑测试，不部署。
 
 首次部署会在 VM 的 `~/oracle-keeper` 生成 `.env`（从 `.env.example` 复制），之后
 不会覆盖——改 VM 侧配置直接编辑该文件，改完 `docker compose up -d` 生效。
+
+## 小业务数据库模拟（MySQL）
+
+开启后，保活进程会在你的 MySQL 里自动建一张订单形态的表（`keeper_orders`，可改名），
+默认每 20 秒一个 tick（每 tick 随机 1-3 笔操作，即每分钟几笔增删改查），让机器看起来
+真的跑着一个小服务。行数上限 100 万：到 90% 起转为批量删除最旧的行，回落到 70% 恢复
+插入。数据库连不上只记一条 warn 并每 tick 重试，绝不影响保活本身。
+
+MySQL 侧一次性准备（建库 + 最小权限账号）：
+
+```sql
+CREATE DATABASE IF NOT EXISTS keeper CHARACTER SET utf8mb4;
+CREATE USER IF NOT EXISTS 'keeper'@'%' IDENTIFIED BY '强密码';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP ON keeper.* TO 'keeper'@'%';
+FLUSH PRIVILEGES;
+```
+
+然后编辑 VM 上 `~/oracle-keeper/.env`：
+
+```bash
+ORACLE_KEEPER_DB_DRIVER=mysql
+ORACLE_KEEPER_DB_HOST=host.docker.internal   # 同机 MySQL；远程库填实际 IP
+ORACLE_KEEPER_DB_USER=keeper
+ORACLE_KEEPER_DB_PASSWORD=强密码
+ORACLE_KEEPER_DB_DB_NAME=keeper
+```
+
+`docker compose up -d` 生效；日志出现 `db workload ready` 即连上。注意：MySQL 的
+bind-address 需允许来自 docker 网段的连接（默认监听 0.0.0.0 即可）；用
+`'keeper'@'172.17.%'` 替代 `'%'` 可把来源收紧到本机容器网段。
 
 ## 本地开发
 

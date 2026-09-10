@@ -24,10 +24,14 @@ import (
 // App owns the cron scheduler and the run-lifetime context shared by all
 // cycles. It implements signalx.Service (Start + Stop).
 type App struct {
-	cron        *cron.Cron
-	kpr         *keeper.Keeper
-	schedule    *config.ScheduleConfig
-	maxRun      time.Duration
+	cron     *cron.Cron
+	kpr      *keeper.Keeper
+	dbw      *keeper.DBWorkload
+	schedule *config.ScheduleConfig
+	maxRun   time.Duration
+
+	// intervalMod selects the rescheduling behavior (randomized interval vs
+	// fixed cron); see config.ScheduleConfig.
 	intervalMod bool
 
 	// entry is the current interval-mode cron entry; replaced after every
@@ -40,8 +44,9 @@ type App struct {
 	runCancel context.CancelFunc
 }
 
-// New validates the schedule, registers the keep-alive job, and prepares
-// the engine. The scheduler does not run until Start.
+// New validates the schedule, registers the keep-alive job (plus the DB
+// workload job when configured), and prepares the engine. The scheduler does
+// not run until Start.
 func New(cfg *config.Config) (*App, error) {
 	scheduler, err := cronx.New(&cronx.Config{
 		Timezone:      cfg.Schedule.Timezone,
@@ -57,8 +62,16 @@ func New(cfg *config.Config) (*App, error) {
 	a := &App{
 		cron:     scheduler,
 		kpr:      kpr,
+		dbw:      keeper.NewDBWorkload(cfg),
 		schedule: cfg.Schedule,
 		maxRun:   cfg.Schedule.MaxRunDuration,
+	}
+	if cfg.DB != nil && cfg.DB.Driver != "" {
+		if _, err := scheduler.AddFunc(cfg.DB.OpCron, a.runDBTick); err != nil {
+			return nil, fmt.Errorf("register db workload job %q: %w", cfg.DB.OpCron, err)
+		}
+		slog.Info("db workload scheduled", "spec", cfg.DB.OpCron,
+			"driver", cfg.DB.Driver, "table", cfg.DB.Table, "max_rows", cfg.DB.MaxRows)
 	}
 	if cfg.Schedule.Spec != "" {
 		if _, err := scheduler.AddFunc(cfg.Schedule.Spec, a.runCycle); err != nil {
@@ -85,14 +98,23 @@ func (a *App) Start() error {
 	return nil
 }
 
-// Stop cancels the run context (aborting any in-flight cycle) and waits for
-// the scheduler to drain.
+// Stop cancels the run context (aborting any in-flight cycle), waits for
+// the scheduler to drain, then closes the DB workload pool.
 func (a *App) Stop() error {
 	if a.runCancel != nil {
 		a.runCancel()
 	}
 	<-a.cron.Stop().Done()
+	a.dbw.Close()
 	return nil
+}
+
+// runDBTick is the DB workload cron entry: one bounded set of small CRUD
+// operations. The workload never fails the daemon — see DBWorkload.Tick.
+func (a *App) runDBTick() {
+	ctx, cancel := context.WithTimeout(a.runCtx, 30*time.Second)
+	defer cancel()
+	a.dbw.Tick(ctx)
 }
 
 // scheduleNext (re)arms the interval-mode entry with a fresh random gap,
