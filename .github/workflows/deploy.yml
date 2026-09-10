@@ -106,6 +106,8 @@ jobs:
           SSH_USER: ${{ secrets.ORACLE_USER }}
           SSH_PORT: ${{ secrets.ORACLE_SSH_PORT || '22' }}
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          # GITHUB_TOKEN 默认不进 shell env，必须显式映射
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
           install -m 600 /dev/null key
