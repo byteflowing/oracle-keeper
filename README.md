@@ -111,9 +111,11 @@ compose 文件、拉新镜像重启。PR 只跑测试，不部署。
 
 一次性准备：
 
-1. 仓库 Secrets（Settings → Secrets and variables → Actions）：
-   `ORACLE_HOST`（VM 公网 IP）、`ORACLE_USER`（SSH 用户，需在 docker 组）、
-   `ORACLE_SSH_KEY`（私钥完整内容）、`ORACLE_SSH_PORT`（可选，默认 22）。
+1. Secrets 建在**组织层**（org → Settings → Secrets and variables → Actions →
+   New organization secret，Repository access 选 All 或 Selected），全组织仓库共用、
+   无需逐仓配置：`ORACLE_HOST`（VM 公网 IP）、`ORACLE_USER`（SSH 用户，需在
+   docker 组）、`ORACLE_SSH_KEY`（私钥完整内容）、`ORACLE_SSH_PORT`（可选，默认 22）。
+   个别仓库要指向不同机器时，在仓库层配同名 secret 覆盖（仓库 > 组织）。
 2. VM 上：SSH 用户 `sudo usermod -aG docker <user>`；ghcr 包私有则先
    `docker login ghcr.io`（PAT 勾 read:packages），包公开可跳过。
 3. VM 安全组放行 SSH 端口（GitHub 托管 runner 出口 IP 段很广，无法精确白名单，
