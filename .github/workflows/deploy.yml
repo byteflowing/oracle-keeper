@@ -102,6 +102,8 @@ jobs:
       - name: Ship image to the VM and restart
         env:
           IMAGE: ghcr.io/${{ github.repository }}:latest
+          # REPO 不带 tag：compose 里 image 是 ${IMAGE_REPOSITORY}:${IMAGE_TAG:-latest}
+          REPO: ghcr.io/${{ github.repository }}
           SSH_HOST: ${{ secrets.ORACLE_HOST }}
           SSH_USER: ${{ secrets.ORACLE_USER }}
           SSH_PORT: ${{ secrets.ORACLE_SSH_PORT || '22' }}
@@ -129,7 +131,7 @@ jobs:
           echo "shipping $IMAGE ($platform) to $remote"
           docker save "$IMAGE" | ssh "${opts[@]}" "$remote" docker load
 
-          ssh "${opts[@]}" "$remote" "IMAGE_REPOSITORY=$IMAGE bash -s" <<'EOF'
+          ssh "${opts[@]}" "$remote" "IMAGE_REPOSITORY=$REPO bash -s" <<'EOF'
             set -eu
             cd "$HOME/oracle-keeper"
             [ -f .env ] || cp .env.example .env
