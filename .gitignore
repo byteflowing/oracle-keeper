@@ -1,0 +1,25 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go
+go.work
+go.work.sum
+
+# Config / env (contains secrets)
+config.yaml
+*.local.yaml
+.env
+
+# IDE
+.idea/

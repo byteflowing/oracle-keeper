@@ -1,0 +1,108 @@
+# oracle-keeper 自动部署。
+#
+# push 到 main（或手动触发）：跑测试 → 构建 amd64+arm64 镜像推 ghcr →
+# SSH 到 Oracle VM，同步 compose 文件并拉取新镜像重启。
+#
+# 需要在仓库 Settings → Secrets and variables → Actions 配置：
+#   ORACLE_HOST     VM 公网 IP
+#   ORACLE_USER     SSH 用户（需有 docker 权限，如 ubuntu / opc）
+#   ORACLE_SSH_KEY  SSH 私钥（OpenSSH 格式完整内容）
+#   ORACLE_SSH_PORT 可选，默认 22
+#
+# VM 端唯一的手工准备（一次性，首次部署前）：
+#   - SSH 用户能免 sudo 用 docker（usermod -aG docker <user>）
+#   - 若 ghcr 包是私有的：docker login ghcr.io（PAT 需 read:packages）
+#   - 防火墙/安全组放行 SSH 端口给 GitHub Actions 的出口 IP 段
+#
+# 首次部署会在 VM 的 ~/oracle-keeper 生成 .env（从 .env.example 复制），
+# 之后不会覆盖；改配置直接在 VM 上编辑该文件，或改完删掉让它重新生成。
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race -count=1 ./...
+
+  build:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # A1 是 arm64，同时留 amd64 给 x86 实例；builder 内交叉编译，无需 QEMU
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GOPROXY=${{ vars.GOPROXY || 'https://proxy.golang.org,direct' }}
+
+  deploy:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync compose files to the VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          port: ${{ secrets.ORACLE_SSH_PORT || '22' }}
+          source: "docker-compose.yaml,.env.example,config.example.yaml"
+          target: "oracle-keeper"
+      - name: Pull image and restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          port: ${{ secrets.ORACLE_SSH_PORT || '22' }}
+          script: |
+            set -eu
+            cd "$HOME/oracle-keeper"
+            [ -f .env ] || cp .env.example .env
+            docker compose pull oracle-keeper
+            docker compose up -d --remove-orphans
+            docker image prune -f
+            docker compose ps oracle-keeper

@@ -1,0 +1,24 @@
+# oracle-keeper 构建上下文裁剪（上下文 = 工作区根目录）
+
+# Repository metadata, local secrets, editor state, and scratch output.
+**/.git/
+**/.env
+**/.idea/
+**/.vscode/
+**/.worktrees/
+**/.DS_Store
+**/*.tmp
+**/*.log
+**/coverage.out
+**/coverage.html
+
+# Source mode compiles inside Docker and never needs host build output.
+bin/
+oracle-keeper/bin/
+
+# Workspace (go.work) build context: the image build resolves sibling modules
+# through the root go.work, so every workspace member stays inside the context
+# and every other top-level directory is excluded.
+/dev-skills/
+/specs/
+/.zcode/

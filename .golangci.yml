@@ -1,0 +1,99 @@
+# Based on Google Go Style Guide — golangci-lint v2 format
+
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt                          # 始终用 gofmt 格式化
+    - goimports                      # import 分组排序(标准库->第三方->内部)
+
+  settings:
+    gofmt:
+      simplify: true                 # gofmt -s 简化
+    goimports:
+      local-prefixes:
+        - github.com/servekit/oracle-keeper # 项目内部包放在最后一组
+
+linters:
+  disable-all: true
+  enable:
+    # ── 静态分析 ──
+    - govet                          # 可疑代码结构
+    - staticcheck                    # 未使用变量/函数、冗余代码、常见 bug (v2 已包含 gosimple/unused/typecheck)
+    - ineffassign                    # 无效赋值
+
+    # ── 错误处理 ──
+    - errcheck                       # 未检查的错误返回值
+    - nilerr                         # 返回 nil 时误返回了非 nil error
+    - errorlint                      # 鼓励用 %w 包装、errors.Is/As 比较
+
+    # ── 代码质量 ──
+    - revive                         # 风格/命名/注释规则(见下方 settings)
+    - gocritic                       # 性能与风格建议
+    - unparam                        # 未使用的函数参数
+    - prealloc                       # slice 预分配提示
+    - unconvert                      # 不必要的类型转换
+    - misspell                       # 拼写错误
+
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam                  # 过于严格, 按需开启
+        - rangeValCopy               # 过于严格
+
+    revive:
+      rules:
+        # ── 命名 ──
+        - name: var-naming           # MixedCaps, 不用下划线
+          arguments:
+            - ["ID", "HTTP", "API", "URL", "JSON", "TCP", "UDP", "IP", "SSH", "SQL", "RPC", "SMS"]
+        - name: receiver-naming      # receiver 1-2 个字母, 短且一致
+        - name: get-return           # 不加 Get 前缀
+        - name: exported             # 导出标识符必须有 doc comment
+        - name: package-comments     # 包注释
+
+        # ── 错误处理 ──
+        - name: error-return         # error 应为最后一个返回值
+        - name: error-strings        # 错误字符串不大写、不以句号结尾
+        - name: error-naming         # sentinel error 用 Err 前缀
+        - name: errorf               # 用 fmt.Errorf 而非 errors.New 格式化
+        - name: indent-error-flow    # 缩进错误处理路径
+
+        # ── Context ──
+        - name: context-as-argument  # context 作为第一个参数
+        - name: context-keys-type    # 不用基本类型作为 context key
+
+        # ── 代码风格 ──
+        - name: bare-return          # 禁止裸 return
+        - name: unused-parameter     # 未使用的参数
+        - name: unused-receiver      # 未使用的 receiver
+        - name: unnecessary-stmt     # 不必要的语句
+        - name: increment-decrement  # 用 i++ 而非 i += 1
+        - name: confusing-results    # 返回值应有命名以避免混淆
+        - name: deep-exit            # 避免在库代码中调用 os.Exit
+
+    errcheck:
+      check-type-assertions: true    # 类型断言也要检查 ok
+      check-blank: true              # _ = mayFail() 也报错
+
+    errorlint:
+      errorf: true                   # 建议 %w 包装
+      asserts: true                  # 建议 errors.Is/As
+      comparison: true               # 禁止 err == errString
+
+  exclusions:
+    rules:
+      # 测试文件放宽要求
+      - path: _test\.go
+        linters:
+          - errcheck
+          - revive
+          - errorlint
+          - gocritic

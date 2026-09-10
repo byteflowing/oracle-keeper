@@ -1,0 +1,62 @@
+# oracle-keeper 配置模板
+#
+# 此文件可作为配置文件直接使用（所有键都注释掉时，程序全部采用代码内默认值）。
+# 优先级：环境变量（前缀 ORACLE_KEEPER_） > 本文件 > 代码默认值。
+# 完整参数说明见 README.md。
+
+schedule:
+  # 两种调度模式：
+  # 1) 随机间隔（默认，spec 留空）：每轮结束后随机 interval_min..interval_max 再跑下一轮，
+  #    不与时钟整点对齐、无固定周期，避免 "每小时整点爆发" 的时间指纹
+  # 2) 固定 cron（spec 非空）：经典 5 字段表达式，可预期但指纹明显，仅在需要确定性时使用
+  # spec: ""
+  # interval_min: 48m
+  # interval_max: 72m
+  # cron 时区（固定 cron 模式用）
+  # timezone: "Asia/Shanghai"
+  # 每轮触发后再随机延迟 0..N 分钟
+  # jitter_minutes: 2
+  # 单轮硬超时（防止异常轮次堆积；配合 skip 策略）
+  # max_run_duration: 45m
+
+busy:
+  # 采样 CPU 利用率 >= 该值时判定宿主机繁忙，本轮跳过
+  # cpu_percent: 40
+  # load1 >= load_factor * 核数 时判定繁忙
+  # load_factor: 0.8
+
+cpu:
+  # CPU 自旋时长：每小时 5 分钟即可让 "95% 时间低于 10%" 判据失效（需 > 8.4h/周）
+  # burn_duration: 5m
+  # 参与自旋的核数，0 = 全部可见核
+  # cores: 0
+  # 每个自旋周期的忙碌占比 (0,1]，留出调度余量
+  # duty_cycle: 0.7
+
+mem:
+  # 每轮分配并触碰的总内存百分比（A1 判据），0 关闭
+  # alloc_percent: 30
+  # 至少保留空闲内存百分比，低于该余量会缩量或跳过
+  # min_free_percent: 25
+
+net:
+  # 每轮下载预算（MB，±20% 随机抖动），0 关闭
+  # total_mb: 700
+  # 单个源每轮最多贡献（MB）——不把流量怼在一个站点
+  # max_per_host_mb: 250
+  # 单个下载请求超时
+  # request_timeout: 5m
+  # 覆盖内置下载源，格式 "name=url" 逗号分隔；URL 含 %d 表示按字节数参数化
+  # sources: []
+
+disk:
+  # 每轮临时目录的父目录（双盘：根盘 + /data）。文件即用即删，目录每轮清理
+  # roots: ["/var/tmp/oracle-keeper", "/data/oracle-keeper"]
+  # 额外随机写盘量（MB，分摊到所有 roots），保证下载失败时两盘也有 I/O，0 关闭
+  # write_mb: 256
+  # 根目录空闲低于该值（MB）时本轮跳过该盘
+  # min_free_mb: 2048
+
+log:
+  # level: info
+  # format: json

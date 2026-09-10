@@ -1,0 +1,49 @@
+# oracle-keeper 部署栈。
+#
+# 双盘设计：根盘临时目录固定挂宿主机 /var/tmp/oracle-keeper，数据盘挂
+# ${DATA_DIR:-/data}/oracle-keeper（容器内都是 disk.roots 的默认路径）。
+#
+# 重要：不要给这个容器加 mem_limit / cpus 限制——
+#   - 内存组件按宿主机总内存比例分配，容器限额会导致过量分配 → OOMKill；
+#   - CPU 限额会压低保活效果。它需要的只是写两个挂载目录 + 出网下载，
+#   因此以 root uid 运行但剥掉全部 capabilities。
+
+services:
+  oracle-keeper:
+    # CI（.github/workflows/deploy.yml）推到 ghcr 并在 VM 上 pull 这个镜像；
+    # 本地构建时 make docker-build 会打同名标签。fork 请在 .env 覆盖 IMAGE_REPOSITORY。
+    image: ${IMAGE_REPOSITORY:-ghcr.io/servekit/oracle-keeper}:${IMAGE_TAG:-latest}
+    build:
+      context: ".."
+      dockerfile: "oracle-keeper/Dockerfile"
+      # 国内机器构建时在 .env 设 GOPROXY=https://goproxy.cn,direct
+      args:
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    container_name: oracle-keeper
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # 留空 SPEC = 随机间隔模式（默认，反指纹）：每轮结束后随机 48-72 分钟再跑下一轮。
+      # 设了 SPEC（如 "0 4-8 * * *"）则走固定 cron，间隔配置被忽略。
+      - ORACLE_KEEPER_SCHEDULE_SPEC=${ORACLE_KEEPER_SCHEDULE_SPEC:-}
+      - ORACLE_KEEPER_SCHEDULE_INTERVAL_MIN=${ORACLE_KEEPER_SCHEDULE_INTERVAL_MIN:-48m}
+      - ORACLE_KEEPER_SCHEDULE_INTERVAL_MAX=${ORACLE_KEEPER_SCHEDULE_INTERVAL_MAX:-72m}
+      - ORACLE_KEEPER_SCHEDULE_JITTER_MINUTES=${ORACLE_KEEPER_SCHEDULE_JITTER_MINUTES:-2}
+      - ORACLE_KEEPER_SCHEDULE_MAX_RUN_DURATION=${ORACLE_KEEPER_SCHEDULE_MAX_RUN_DURATION:-45m}
+      - ORACLE_KEEPER_BUSY_CPU_PERCENT=${ORACLE_KEEPER_BUSY_CPU_PERCENT:-40}
+      - ORACLE_KEEPER_BUSY_LOAD_FACTOR=${ORACLE_KEEPER_BUSY_LOAD_FACTOR:-0.8}
+      - ORACLE_KEEPER_CPU_BURN_DURATION=${ORACLE_KEEPER_CPU_BURN_DURATION:-5m}
+      - ORACLE_KEEPER_CPU_DUTY_CYCLE=${ORACLE_KEEPER_CPU_DUTY_CYCLE:-0.7}
+      - ORACLE_KEEPER_MEM_ALLOC_PERCENT=${ORACLE_KEEPER_MEM_ALLOC_PERCENT:-30}
+      - ORACLE_KEEPER_NET_TOTAL_MB=${ORACLE_KEEPER_NET_TOTAL_MB:-700}
+      - ORACLE_KEEPER_NET_MAX_PER_HOST_MB=${ORACLE_KEEPER_NET_MAX_PER_HOST_MB:-250}
+      - ORACLE_KEEPER_DISK_WRITE_MB=${ORACLE_KEEPER_DISK_WRITE_MB:-256}
+      - ORACLE_KEEPER_LOG_LEVEL=${ORACLE_KEEPER_LOG_LEVEL:-info}
+    volumes:
+      # 根盘：临时文件（下载/写盘），每轮结束自动删除
+      - /var/tmp/oracle-keeper:/var/tmp/oracle-keeper
+      # 数据盘：${DATA_DIR:-/data} 是宿主机数据盘挂载点
+      - ${DATA_DIR:-/data}/oracle-keeper:/data/oracle-keeper
