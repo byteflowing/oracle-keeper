@@ -50,7 +50,7 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, 256, cfg.Disk.WriteMB)
 	require.Equal(t, uint64(2048), cfg.Disk.MinFreeMB)
 	require.True(t, cfg.Disk.RetainFiles)
-	require.InDelta(t, 75, cfg.Disk.PurgePercent, 0)
+	require.InDelta(t, 40, cfg.Disk.PurgePercent, 0)
 }
 
 func TestLoadEnvOverrides(t *testing.T) {

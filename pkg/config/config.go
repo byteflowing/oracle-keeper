@@ -126,9 +126,10 @@ type DiskConfig struct {
 	RetainFiles bool `default:"true"`
 	// PurgePercent is the per-root used-percentage high watermark: when a
 	// root is fuller than this at cycle start, all retained run dirs are
-	// purged. This keeps retention from ever filling the 200GB Always Free
-	// block-volume allowance.
-	PurgePercent float64 `default:"75"`
+	// purged. 40 leaves the majority of the volume for real workloads while
+	// still amortizing purges; raise it if business data normally sits
+	// above this level (the purge only ever deletes our own run dirs).
+	PurgePercent float64 `default:"40"`
 }
 
 // Load reads config from the standard configx locations (env > file >

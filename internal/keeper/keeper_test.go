@@ -145,7 +145,7 @@ func TestRunRetainsFiles(t *testing.T) {
 		CPU:  &config.CPUConfig{BurnDuration: 200 * time.Millisecond, Cores: 1, DutyCycle: 0.5},
 		Mem:  &config.MemConfig{AllocPercent: 0, MinFreePercent: 25},
 		Net:  &config.NetConfig{TotalMB: 0, MaxPerHostMB: 1, RequestTimeout: time.Second},
-		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: true, PurgePercent: 75},
+		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: true, PurgePercent: 40},
 	}
 	kpr := newTestKeeper(t, cfg)
 

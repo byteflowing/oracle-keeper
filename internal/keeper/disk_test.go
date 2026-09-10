@@ -69,7 +69,7 @@ func newPurgeKeeper(t *testing.T, pct float64) *Keeper {
 		CPU:      &config.CPUConfig{},
 		Mem:      &config.MemConfig{},
 		Net:      &config.NetConfig{RequestTimeout: time.Second},
-		Disk:     &config.DiskConfig{RetainFiles: true, PurgePercent: 75},
+		Disk:     &config.DiskConfig{RetainFiles: true, PurgePercent: 40},
 	}
 	kpr, err := New(cfg)
 	require.NoError(t, err)
@@ -93,14 +93,14 @@ func TestPurgeRoots(t *testing.T) {
 
 	t.Run("below watermark keeps everything", func(t *testing.T) {
 		root, old1, old2 := newRoot(t)
-		newPurgeKeeper(t, 50).purgeRoots(context.Background(), []string{root}, nil)
+		newPurgeKeeper(t, 30).purgeRoots(context.Background(), []string{root}, nil)
 		require.DirExists(t, old1)
 		require.DirExists(t, old2)
 	})
 
 	t.Run("above watermark purges old run dirs only", func(t *testing.T) {
 		root, old1, old2 := newRoot(t)
-		newPurgeKeeper(t, 80).purgeRoots(context.Background(), []string{root}, nil)
+		newPurgeKeeper(t, 50).purgeRoots(context.Background(), []string{root}, nil)
 		require.NoDirExists(t, old1)
 		require.NoDirExists(t, old2)
 		require.DirExists(t, filepath.Join(root, "unrelated"), "foreign data must not be touched")
@@ -108,14 +108,14 @@ func TestPurgeRoots(t *testing.T) {
 
 	t.Run("keep set survives the purge", func(t *testing.T) {
 		root, old1, _ := newRoot(t)
-		newPurgeKeeper(t, 80).purgeRoots(context.Background(), []string{root}, map[string]bool{old1: true})
+		newPurgeKeeper(t, 50).purgeRoots(context.Background(), []string{root}, map[string]bool{old1: true})
 		require.DirExists(t, old1)
 		require.NoDirExists(t, filepath.Join(root, "run-old2"))
 	})
 
 	t.Run("at exact watermark purges", func(t *testing.T) {
 		root, old1, _ := newRoot(t)
-		newPurgeKeeper(t, 75).purgeRoots(context.Background(), []string{root}, nil)
+		newPurgeKeeper(t, 40).purgeRoots(context.Background(), []string{root}, nil)
 		require.NoDirExists(t, old1)
 	})
 }
