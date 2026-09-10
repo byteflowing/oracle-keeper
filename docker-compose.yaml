@@ -10,9 +10,9 @@
 
 services:
   oracle-keeper:
-    # CI（.github/workflows/deploy.yml）推到 ghcr 并在 VM 上 pull 这个镜像；
-    # 本地构建时 make docker-build 会打同名标签。fork 请在 .env 覆盖 IMAGE_REPOSITORY。
-    image: ${IMAGE_REPOSITORY:-ghcr.io/servekit/oracle-keeper}:${IMAGE_TAG:-latest}
+    # CI（.github/workflows/deploy.yml）推到 ghcr 并在 VM 上 pull 这个镜像，
+    # 部署时会显式 export IMAGE_REPOSITORY 兜底；fork 后改这里的默认值或 .env 覆盖。
+    image: ${IMAGE_REPOSITORY:-ghcr.io/ai1888888/oracle-keeper}:${IMAGE_TAG:-latest}
     build:
       context: ".."
       dockerfile: "oracle-keeper/Dockerfile"

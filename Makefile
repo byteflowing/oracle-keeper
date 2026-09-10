@@ -47,4 +47,4 @@ tidy:
 ## docker-build: Build the runtime image with the CI image name (arm64 A1 boxes
 ## build natively; other arches are cross-compiled by the Dockerfile)
 docker-build:
-	docker build -f Dockerfile -t ghcr.io/servekit/oracle-keeper:latest ..
+	docker build -f Dockerfile -t ghcr.io/ai1888888/oracle-keeper:latest ..
