@@ -11,8 +11,10 @@
 #
 # VM 端唯一的手工准备（一次性，首次部署前）：
 #   - SSH 用户能免 sudo 用 docker（usermod -aG docker <user>）
-#   - 若 ghcr 包是私有的：docker login ghcr.io（PAT 需 read:packages）
 #   - 防火墙/安全组放行 SSH 端口给 GitHub Actions 的出口 IP 段
+#
+# ghcr 包保持 Private 即可：镜像由 runner 持 GITHUB_TOKEN 拉取后
+# docker save | ssh docker load 直送 VM，VM 无需 registry 凭证。
 #
 # 首次部署会在 VM 的 ~/oracle-keeper 生成 .env（从 .env.example 复制），
 # 之后不会覆盖；改配置直接在 VM 上编辑该文件，或改完删掉让它重新生成。
@@ -80,6 +82,9 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
       - name: Sync compose files to the VM
@@ -91,20 +96,43 @@ jobs:
           port: ${{ secrets.ORACLE_SSH_PORT || '22' }}
           source: "docker-compose.yaml,.env.example,config.example.yaml"
           target: "oracle-keeper"
-      - name: Pull image and restart
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          port: ${{ secrets.ORACLE_SSH_PORT || '22' }}
-          script: |
+      # 镜像不经过 VM 的 registry 认证：runner 用 GITHUB_TOKEN 从 ghcr 拉取
+      # （私有包可读），按 VM 实际架构选平台，docker save | ssh docker load 直送。
+      # VM 因此既不需要 ghcr 公开包，也不需要 docker login。
+      - name: Ship image to the VM and restart
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:latest
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_USER: ${{ secrets.ORACLE_USER }}
+          SSH_PORT: ${{ secrets.ORACLE_SSH_PORT || '22' }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          set -eu
+          install -m 600 /dev/null key
+          printenv SSH_KEY > key
+          opts=(-i key -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new)
+          remote="$SSH_USER@$SSH_HOST"
+
+          arch="$(ssh "${opts[@]}" "$remote" uname -m)"
+          case "$arch" in
+            aarch64) platform=linux/arm64 ;;
+            x86_64)  platform=linux/amd64 ;;
+            *) echo "unsupported VM arch: $arch"; exit 1 ;;
+          esac
+          echo "VM arch: $arch -> $platform"
+
+          echo "${GITHUB_TOKEN:?}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull --platform "$platform" "$IMAGE"
+
+          echo "shipping $IMAGE ($platform) to $remote"
+          docker save "$IMAGE" | ssh "${opts[@]}" "$remote" docker load
+
+          ssh "${opts[@]}" "IMAGE_REPOSITORY=$IMAGE bash -s" <<'EOF'
             set -eu
             cd "$HOME/oracle-keeper"
             [ -f .env ] || cp .env.example .env
-            # 镜像名在 runner 侧内联（appleboy 只转发 envs 点名的变量，远程拿不到 job env）
-            export IMAGE_REPOSITORY="ghcr.io/${{ github.repository }}"
-            docker compose pull oracle-keeper
+            export IMAGE_REPOSITORY
             docker compose up -d --remove-orphans
             docker image prune -f
             docker compose ps oracle-keeper
+          EOF

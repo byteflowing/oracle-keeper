@@ -132,8 +132,9 @@ compose 文件、拉新镜像重启。PR 只跑测试，不部署。
    pbcopy < ~/.ssh/oracle_keeper_deploy   # macOS；Linux 用 xclip 或 cat 后手动复制
    ```
 
-3. VM 上：SSH 用户 `sudo usermod -aG docker <user>`；ghcr 包私有则先
-   `docker login ghcr.io`（PAT 勾 read:packages），包公开可跳过。
+3. VM 上：SSH 用户 `sudo usermod -aG docker <user>`。ghcr 包保持 Private 即可——
+   镜像由 runner 拉取后 `docker save | ssh docker load` 直送 VM，VM 不需要任何
+   registry 凭证。
 4. VM 安全组放行 SSH 端口（GitHub 托管 runner 出口 IP 段很广，无法精确白名单，
    建议直接对 0.0.0.0 放行 22 并依赖密钥认证，或改用自托管 runner）。
 
