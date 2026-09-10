@@ -129,7 +129,7 @@ jobs:
           echo "shipping $IMAGE ($platform) to $remote"
           docker save "$IMAGE" | ssh "${opts[@]}" "$remote" docker load
 
-          ssh "${opts[@]}" "IMAGE_REPOSITORY=$IMAGE bash -s" <<'EOF'
+          ssh "${opts[@]}" "$remote" "IMAGE_REPOSITORY=$IMAGE bash -s" <<'EOF'
             set -eu
             cd "$HOME/oracle-keeper"
             [ -f .env ] || cp .env.example .env
