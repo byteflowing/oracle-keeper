@@ -102,11 +102,9 @@ jobs:
             set -eu
             cd "$HOME/oracle-keeper"
             [ -f .env ] || cp .env.example .env
-            # 镜像名以本仓库实际归属为准（fork/迁移后依然正确），不受 .env 默认值影响
-            export IMAGE_REPOSITORY="ghcr.io/${GITHUB_REPO}"
+            # 镜像名在 runner 侧内联（appleboy 只转发 envs 点名的变量，远程拿不到 job env）
+            export IMAGE_REPOSITORY="ghcr.io/${{ github.repository }}"
             docker compose pull oracle-keeper
             docker compose up -d --remove-orphans
             docker image prune -f
             docker compose ps oracle-keeper
-        env:
-          GITHUB_REPO: ${{ github.repository }}
