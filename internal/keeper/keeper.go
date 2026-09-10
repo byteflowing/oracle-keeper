@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/disk"
+
 	"github.com/servekit/oracle-keeper/pkg/config"
 )
 
@@ -32,6 +34,8 @@ type Keeper struct {
 	rng *rand.Rand
 	// loadSampleInterval is shortened by tests to keep the busy check fast.
 	loadSampleInterval time.Duration
+	// diskUsage is swappable so purge tests can fake high-water states.
+	diskUsage func(ctx context.Context, path string) (*disk.UsageStat, error)
 
 	sources []source
 }
@@ -47,6 +51,7 @@ func New(cfg *config.Config) (*Keeper, error) {
 		cfg:                cfg,
 		rng:                rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))),
 		loadSampleInterval: loadSampleInterval,
+		diskUsage:          disk.UsageWithContext,
 		sources:            sources,
 	}, nil
 }
@@ -86,6 +91,13 @@ func (k *Keeper) Run(ctx context.Context) error {
 		"cpu_percent", sample.CPUPercent, "load1", sample.Load1, "cores", cores)
 
 	roots := k.prepareRoots(ctx)
+	if k.cfg.Disk.RetainFiles {
+		// Retention mode: enforce the high-water mark before this cycle
+		// writes anything new. sweepStale is skipped — old dirs are
+		// intentional now and purgeRoots owns their lifecycle.
+		k.purgeRoots(ctx, k.cfg.Disk.Roots, nil)
+		roots = k.prepareRoots(ctx) // a purged root may have become usable
+	}
 	var runDirs []string
 	for _, root := range roots {
 		dir, err := makeRunDir(root)
@@ -95,10 +107,15 @@ func (k *Keeper) Run(ctx context.Context) error {
 		}
 		runDirs = append(runDirs, dir)
 	}
-	if swept := sweepStale(roots, staleDirAge); swept > 0 {
-		slog.Info("startup sweep removed stale run dirs", "count", swept)
+	if !k.cfg.Disk.RetainFiles {
+		if swept := sweepStale(roots, staleDirAge); swept > 0 {
+			slog.Info("startup sweep removed stale run dirs", "count", swept)
+		}
+		defer cleanupRunDirs(runDirs)
+	} else {
+		defer slog.Info("run files retained until disk high-water mark",
+			"dirs", runDirs, "purge_percent", k.cfg.Disk.PurgePercent)
 	}
-	defer cleanupRunDirs(runDirs)
 	if len(runDirs) == 0 {
 		slog.Warn("no usable temp root; network and disk-write phases skipped")
 	}

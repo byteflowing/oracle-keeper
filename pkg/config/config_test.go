@@ -49,6 +49,8 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, []string{"/var/tmp/oracle-keeper", "/data/oracle-keeper"}, cfg.Disk.Roots)
 	require.Equal(t, 256, cfg.Disk.WriteMB)
 	require.Equal(t, uint64(2048), cfg.Disk.MinFreeMB)
+	require.True(t, cfg.Disk.RetainFiles)
+	require.InDelta(t, 75, cfg.Disk.PurgePercent, 0)
 }
 
 func TestLoadEnvOverrides(t *testing.T) {
@@ -74,6 +76,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{name: "alloc percent too high", env: map[string]string{"ORACLE_KEEPER_MEM_ALLOC_PERCENT": "95"}},
 		{name: "per-host cap missing with budget", env: map[string]string{"ORACLE_KEEPER_NET_MAX_PER_HOST_MB": "0"}},
 		{name: "negative write pass", env: map[string]string{"ORACLE_KEEPER_DISK_WRITE_MB": "-1"}},
+		{name: "purge percent out of range", env: map[string]string{"ORACLE_KEEPER_DISK_PURGE_PERCENT": "120"}},
 		{name: "interval max below min", env: map[string]string{
 			"ORACLE_KEEPER_SCHEDULE_INTERVAL_MIN": "60m",
 			"ORACLE_KEEPER_SCHEDULE_INTERVAL_MAX": "30m",

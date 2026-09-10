@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/stretchr/testify/require"
+
+	"github.com/servekit/oracle-keeper/pkg/config"
 )
 
 func TestSweepStale(t *testing.T) {
@@ -48,6 +51,85 @@ func TestRunDirLifecycle(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "dl-test.bin"), []byte("payload"), 0o644))
 	cleanupRunDirs([]string{dir})
 	require.NoDirExists(t, dir)
+}
+
+// fakeUsage returns a diskUsage func reporting a fixed percentage.
+func fakeUsage(pct float64) func(context.Context, string) (*disk.UsageStat, error) {
+	return func(_ context.Context, _ string) (*disk.UsageStat, error) {
+		return &disk.UsageStat{UsedPercent: pct}, nil
+	}
+}
+
+// newPurgeKeeper builds a Keeper with the given reported disk usage.
+func newPurgeKeeper(t *testing.T, pct float64) *Keeper {
+	t.Helper()
+	cfg := &config.Config{
+		Schedule: &config.ScheduleConfig{IntervalMin: time.Minute, IntervalMax: time.Minute, MaxRunDuration: time.Minute},
+		Busy:     &config.BusyConfig{CPUPercent: 100, LoadFactor: 1e6},
+		CPU:      &config.CPUConfig{},
+		Mem:      &config.MemConfig{},
+		Net:      &config.NetConfig{RequestTimeout: time.Second},
+		Disk:     &config.DiskConfig{RetainFiles: true, PurgePercent: 75},
+	}
+	kpr, err := New(cfg)
+	require.NoError(t, err)
+	kpr.diskUsage = fakeUsage(pct)
+	return kpr
+}
+
+func TestPurgeRoots(t *testing.T) {
+	newRoot := func(t *testing.T) (string, string, string) {
+		t.Helper()
+		root := t.TempDir()
+		old1 := filepath.Join(root, "run-old1")
+		old2 := filepath.Join(root, "run-old2")
+		foreign := filepath.Join(root, "unrelated")
+		for _, dir := range []string{old1, old2, foreign} {
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "data.bin"), []byte("payload"), 0o644))
+		}
+		return root, old1, old2
+	}
+
+	t.Run("below watermark keeps everything", func(t *testing.T) {
+		root, old1, old2 := newRoot(t)
+		newPurgeKeeper(t, 50).purgeRoots(context.Background(), []string{root}, nil)
+		require.DirExists(t, old1)
+		require.DirExists(t, old2)
+	})
+
+	t.Run("above watermark purges old run dirs only", func(t *testing.T) {
+		root, old1, old2 := newRoot(t)
+		newPurgeKeeper(t, 80).purgeRoots(context.Background(), []string{root}, nil)
+		require.NoDirExists(t, old1)
+		require.NoDirExists(t, old2)
+		require.DirExists(t, filepath.Join(root, "unrelated"), "foreign data must not be touched")
+	})
+
+	t.Run("keep set survives the purge", func(t *testing.T) {
+		root, old1, _ := newRoot(t)
+		newPurgeKeeper(t, 80).purgeRoots(context.Background(), []string{root}, map[string]bool{old1: true})
+		require.DirExists(t, old1)
+		require.NoDirExists(t, filepath.Join(root, "run-old2"))
+	})
+
+	t.Run("at exact watermark purges", func(t *testing.T) {
+		root, old1, _ := newRoot(t)
+		newPurgeKeeper(t, 75).purgeRoots(context.Background(), []string{root}, nil)
+		require.NoDirExists(t, old1)
+	})
+}
+
+func TestDirSize(t *testing.T) {
+	dir := t.TempDir()
+	require.Zero(t, dirSize(dir))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.bin"), make([]byte, 1000), 0o644))
+	sub := filepath.Join(dir, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "b.bin"), make([]byte, 2500), 0o644))
+	require.Equal(t, int64(3500), dirSize(dir))
+	// Missing dir sizes to zero rather than erroring.
+	require.Zero(t, dirSize(filepath.Join(dir, "does-not-exist")))
 }
 
 func TestWritePass(t *testing.T) {

@@ -237,7 +237,6 @@ func (k *Keeper) downloadOne(ctx context.Context, client *http.Client, task down
 	n, copyErr := io.CopyN(f, resp.Body, task.wantB)
 	syncErr := f.Sync() // force dirty pages to the platter before removal
 	closeErr := f.Close()
-	removeErr := os.Remove(path)
 
 	if n > 0 {
 		stats.totalB += n
@@ -249,9 +248,17 @@ func (k *Keeper) downloadOne(ctx context.Context, client *http.Client, task down
 	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 		logNetError(task, copyErr)
 	}
-	for _, e := range []error{syncErr, closeErr, removeErr} {
-		if e != nil {
-			slog.Warn("download: cleanup", "path", path, "error", e)
+	if syncErr != nil {
+		slog.Warn("download: sync file", "path", path, "error", syncErr)
+	}
+	if closeErr != nil {
+		slog.Warn("download: close file", "path", path, "error", closeErr)
+	}
+	// Retention mode keeps the file on disk (purged at the high-water mark);
+	// delete mode removes it right away — the run-dir cleanup is the backstop.
+	if !k.cfg.Disk.RetainFiles {
+		if removeErr := os.Remove(path); removeErr != nil {
+			slog.Warn("download: remove file", "path", path, "error", removeErr)
 		}
 	}
 }

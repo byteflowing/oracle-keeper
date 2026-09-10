@@ -99,7 +99,7 @@ func idleBusyConfig() *config.BusyConfig {
 
 // TestRunSmoke drives one full cycle with tiny parameters: a short burn, no
 // memory/net phases, one temp root. It verifies the orchestrator wires the
-// phases together and that the run dir is cleaned up afterwards.
+// phases together and that the run dir is cleaned up afterwards (delete mode).
 func TestRunSmoke(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full-cycle smoke test")
@@ -115,7 +115,7 @@ func TestRunSmoke(t *testing.T) {
 		CPU:  &config.CPUConfig{BurnDuration: 200 * time.Millisecond, Cores: 1, DutyCycle: 0.5},
 		Mem:  &config.MemConfig{AllocPercent: 0, MinFreePercent: 25},
 		Net:  &config.NetConfig{TotalMB: 0, MaxPerHostMB: 1, RequestTimeout: time.Second},
-		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0},
+		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: false},
 	}
 	kpr := newTestKeeper(t, cfg)
 
@@ -125,7 +125,37 @@ func TestRunSmoke(t *testing.T) {
 
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
-	require.Empty(t, entries, "cycle must clean up its run dir")
+	require.Empty(t, entries, "delete mode must clean up the run dir")
+}
+
+// TestRunRetainsFiles pins retention mode: the cycle's files stay in the run
+// dir afterwards (purged only by the high-water mark, exercised separately).
+func TestRunRetainsFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full-cycle smoke test")
+	}
+
+	root := t.TempDir()
+	cfg := &config.Config{
+		Schedule: &config.ScheduleConfig{
+			Spec: "0 * * * *", Timezone: "UTC",
+			JitterMinutes: 0, MaxRunDuration: time.Minute,
+		},
+		Busy: idleBusyConfig(),
+		CPU:  &config.CPUConfig{BurnDuration: 200 * time.Millisecond, Cores: 1, DutyCycle: 0.5},
+		Mem:  &config.MemConfig{AllocPercent: 0, MinFreePercent: 25},
+		Net:  &config.NetConfig{TotalMB: 0, MaxPerHostMB: 1, RequestTimeout: time.Second},
+		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: true, PurgePercent: 75},
+	}
+	kpr := newTestKeeper(t, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, kpr.Run(ctx))
+
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries, "retention mode must keep the run dir")
 }
 
 // TestRunSkipsWhenBusy pins the yield-to-workload behavior: a busy host must

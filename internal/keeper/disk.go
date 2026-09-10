@@ -68,6 +68,7 @@ func cleanupRunDirs(dirs []string) {
 // sweepStale removes run-* directories older than maxAge across roots. It
 // runs at startup to reclaim space from cycles killed by SIGKILL, where the
 // deferred cleanup never fired. Returns the number of directories removed.
+// Only used in delete mode — with RetainFiles on, purgeRoots owns cleanup.
 func sweepStale(roots []string, maxAge time.Duration) int {
 	cutoff := time.Now().Add(-maxAge)
 	removed := 0
@@ -94,6 +95,74 @@ func sweepStale(roots []string, maxAge time.Duration) int {
 		}
 	}
 	return removed
+}
+
+// purgeRoots enforces the retention high-water mark: for every root whose
+// used percentage is at or above cfg.Disk.PurgePercent, all retained run-*
+// directories are removed at once. It runs at cycle start, before the fresh
+// run dir exists, so `keep` is normally nil; the current cycle's dir is
+// passed by tests. Roots whose usage stays above the watermark after the
+// purge are occupied by foreign data — logged, not fought.
+func (k *Keeper) purgeRoots(ctx context.Context, roots []string, keep map[string]bool) {
+	for _, root := range roots {
+		usage, err := k.diskUsage(ctx, root)
+		if err != nil {
+			slog.Warn("purge: stat root", "root", root, "error", err)
+			continue
+		}
+		if usage.UsedPercent < k.cfg.Disk.PurgePercent {
+			continue
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			slog.Warn("purge: read root", "root", root, "error", err)
+			continue
+		}
+		var freed int64
+		count := 0
+		for _, e := range entries {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), runDirPrefix) {
+				continue
+			}
+			dir := filepath.Join(root, e.Name())
+			if keep[dir] {
+				continue
+			}
+			freed += dirSize(dir)
+			if err := os.RemoveAll(dir); err != nil {
+				slog.Warn("purge: remove run dir", "dir", dir, "error", err)
+				continue
+			}
+			count++
+		}
+		slog.Info("purged retained run dirs above high-water mark",
+			"root", root, "used_percent", usage.UsedPercent,
+			"purge_percent", k.cfg.Disk.PurgePercent,
+			"dirs", count, "freed_mb", float64(freed)/(1<<20))
+		if after, err := k.diskUsage(ctx, root); err == nil && after.UsedPercent >= k.cfg.Disk.PurgePercent {
+			slog.Warn("root still above watermark after purge; space is used by foreign data",
+				"root", root, "used_percent", after.UsedPercent)
+		}
+	}
+}
+
+// dirSize sums the regular file sizes under dir via a single walk.
+func dirSize(dir string) int64 {
+	var total int64
+	// Best-effort accounting: a file vanishing mid-walk must not abort the
+	// sum, so per-entry errors are swallowed on purpose.
+	if err := filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // see comment above
+		}
+		if info, infoErr := d.Info(); infoErr == nil && !d.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("disk: size walk", "dir", dir, "error", err)
+	}
+	return total
 }
 
 // writePass writes totalB of random data across dirs in writeChunkB files,

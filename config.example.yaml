@@ -50,12 +50,18 @@ net:
   # sources: []
 
 disk:
-  # 每轮临时目录的父目录（双盘：根盘 + /data）。文件即用即删，目录每轮清理
+  # 每轮临时目录的父目录（双盘：根盘 + /data）
   # roots: ["/var/tmp/oracle-keeper", "/data/oracle-keeper"]
   # 额外随机写盘量（MB，分摊到所有 roots），保证下载失败时两盘也有 I/O，0 关闭
   # write_mb: 256
   # 根目录空闲低于该值（MB）时本轮跳过该盘
   # min_free_mb: 2048
+  # 保留模式：下载/写入的文件轮末不删除，让实例持续持有数据（注意：Oracle 官方
+  # 闲置判据不含存储项，这是额外保险）。改为 false 恢复"用完即删"
+  # retain_files: true
+  # 高水位：任一盘占用率 >= 该值时，下轮开始前清掉所有保留的 run 目录，
+  # 保证永远写不满 200GB 免费块存储额度
+  # purge_percent: 75
 
 log:
   # level: info

@@ -118,6 +118,17 @@ type DiskConfig struct {
 	WriteMB int `default:"256"`
 	// MinFreeMB: roots with less free space are skipped for that cycle.
 	MinFreeMB uint64 `default:"2048"`
+	// RetainFiles keeps the downloaded/written files on disk instead of
+	// deleting them at cycle end — the instance then holds persistent data,
+	// which some prefer as extra camouflage. Oracle's published idle
+	// criteria do not include storage, so this is optional hardening, not a
+	// criterion requirement.
+	RetainFiles bool `default:"true"`
+	// PurgePercent is the per-root used-percentage high watermark: when a
+	// root is fuller than this at cycle start, all retained run dirs are
+	// purged. This keeps retention from ever filling the 200GB Always Free
+	// block-volume allowance.
+	PurgePercent float64 `default:"75"`
 }
 
 // Load reads config from the standard configx locations (env > file >
@@ -188,6 +199,9 @@ func (c *Config) validate() error {
 	}
 	if c.Disk.WriteMB < 0 {
 		return fmt.Errorf("disk.write_mb must be >= 0, got %d", c.Disk.WriteMB)
+	}
+	if c.Disk.PurgePercent <= 0 || c.Disk.PurgePercent > 100 {
+		return fmt.Errorf("disk.purge_percent must be in (0,100], got %v", c.Disk.PurgePercent)
 	}
 	return nil
 }

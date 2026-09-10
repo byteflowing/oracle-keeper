@@ -19,7 +19,9 @@ Oracle Cloud 永久免费实例（Always Free）保活守护进程。针对 Orac
        ├─ 内存触碰      30% 总内存，保持时长同本轮 CPU 自旋（保留 25% 余量，不足缩量/跳过）
        ├─ 多源下载      560-840MB，6 个源洗牌轮换，单源 ≤250MB，随机 Range 偏移+分块，间歇 0.5-5s
        └─ 随机写盘      205-307MB 分摊到两盘（下载全失败时也保证双盘有 I/O）
-     → 全部临时目录删除 → 汇总日志 → 随机间隔后进入下一轮
+     → 汇总日志 → 随机间隔后进入下一轮
+     → 默认保留模式：文件留在 run 目录（占盘作为持续数据）；任一盘占用率 ≥75%
+       时下轮开始前清空保留目录（`DISK_RETAIN_FILES=false` 恢复用完即删）
 ```
 
 ### 反指纹（时间与行为随机化）
@@ -94,6 +96,8 @@ x86 实例同样可用（构建时自动交叉编译，无需改 Dockerfile）�
 | `ORACLE_KEEPER_DISK_ROOTS` | `/var/tmp/oracle-keeper,/data/oracle-keeper` | 双盘临时根目录 |
 | `ORACLE_KEEPER_DISK_WRITE_MB` | `256` | 额外写盘量 MB，0 关闭 |
 | `ORACLE_KEEPER_DISK_MIN_FREE_MB` | `2048` | 盘空闲低于此值跳过该盘 |
+| `ORACLE_KEEPER_DISK_RETAIN_FILES` | `true` | 保留模式：文件轮末不删除，高水位才清理 |
+| `ORACLE_KEEPER_DISK_PURGE_PERCENT` | `75` | 任一盘占用率 ≥ 此值时，下轮开始前清空保留的 run 目录 |
 
 调参建议：
 
@@ -101,6 +105,9 @@ x86 实例同样可用（构建时自动交叉编译，无需改 Dockerfile）�
 - 流量配额紧张 → 调小 `NET_TOTAL_MB`（e.g. 300），保底靠 CPU/内存阶段。
 - 想让节奏更碎/更散 → 收窄 `INTERVAL_MIN/MAX`（如 30–90m）或加大 `JITTER_MINUTES`。
 - 需要确定性调度（如只在夜间） → 设 `SCHEDULE_SPEC`（如 `"0 2-7 * * *"`），间隔配置被忽略。
+- 想恢复"用完即删" → `DISK_RETAIN_FILES=false`（Oracle 官方闲置判据不含存储项，保留
+  文件只是让实例持续持有数据的额外保险；保留模式由高水位 `DISK_PURGE_PERCENT` 兜底，
+  不会写满 200GB 免费块存储额度）。
 
 ## CI/CD（GitHub Actions 自动部署）
 
