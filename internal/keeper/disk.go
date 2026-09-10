@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/shirou/gopsutil/v4/disk"
 )
 
 // runDirPrefix names per-cycle temp dirs inside each root so the startup
@@ -32,7 +30,7 @@ func (k *Keeper) prepareRoots(ctx context.Context) []string {
 			slog.Warn("disk root unusable", "root", root, "error", err)
 			continue
 		}
-		usage, err := disk.UsageWithContext(ctx, root)
+		usage, err := k.diskUsage(ctx, root)
 		if err != nil {
 			slog.Warn("disk root: stat failed", "root", root, "error", err)
 			continue
@@ -144,6 +142,43 @@ func (k *Keeper) purgeRoots(ctx context.Context, roots []string, keep map[string
 				"root", root, "used_percent", after.UsedPercent)
 		}
 	}
+}
+
+// baselinePct returns the root's used percentage EXCLUDING bytes held by our
+// own run-* directories — the level the volume would show if the keeper had
+// never written anything. It gates file generation: once real data alone is
+// at/above the threshold, generating more files adds nothing and stops.
+// Stat failures report 0 (fail-open): prepareRoots' MinFreeMB check still
+// guards against actually filling the volume.
+func (k *Keeper) baselinePct(ctx context.Context, root string) float64 {
+	usage, err := k.diskUsage(ctx, root)
+	if err != nil || usage.Total == 0 {
+		return 0
+	}
+	ours := retainedBytes(root)
+	if ours == 0 {
+		return usage.UsedPercent
+	}
+	baseline := usage.UsedPercent - float64(ours)/float64(usage.Total)*100
+	if baseline < 0 {
+		return 0
+	}
+	return baseline
+}
+
+// retainedBytes sums the sizes of our run-* directories under root.
+func retainedBytes(root string) int64 {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), runDirPrefix) {
+			total += dirSize(filepath.Join(root, e.Name()))
+		}
+	}
+	return total
 }
 
 // dirSize sums the regular file sizes under dir via a single walk.

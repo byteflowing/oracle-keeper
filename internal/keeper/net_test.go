@@ -1,13 +1,49 @@
 package keeper
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/servekit/oracle-keeper/pkg/config"
 )
+
+// TestRunDownloadsDiscardMode drives the network phase with no destination
+// dirs: bytes must still be fetched and counted, but nothing is written to
+// disk (the baseline gate left no writable root).
+func TestRunDownloadsDiscardMode(t *testing.T) {
+	const size = 1 << 20
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, size))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{
+		Schedule: &config.ScheduleConfig{IntervalMin: time.Minute, IntervalMax: time.Minute, MaxRunDuration: time.Minute},
+		Busy:     &config.BusyConfig{CPUPercent: 100, LoadFactor: 1e6},
+		CPU:      &config.CPUConfig{},
+		Mem:      &config.MemConfig{},
+		Net:      &config.NetConfig{RequestTimeout: 10 * time.Second},
+		Disk:     &config.DiskConfig{RetainFiles: true},
+	}
+	kpr, err := New(cfg)
+	require.NoError(t, err)
+
+	stats := kpr.runDownloads(context.Background(),
+		[]downloadTask{{src: source{name: "test"}, url: srv.URL, wantB: size}}, nil)
+
+	require.Equal(t, int64(size), stats.totalB)
+	require.Equal(t, int64(size), stats.discardedB)
+	require.Zero(t, stats.failures)
+	require.Equal(t, int64(size), stats.perHostB["test"])
+}
 
 func TestPlanDownloads(t *testing.T) {
 	sources := []source{

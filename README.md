@@ -20,8 +20,9 @@ Oracle Cloud 永久免费实例（Always Free）保活守护进程。针对 Orac
        ├─ 多源下载      560-840MB，6 个源洗牌轮换，单源 ≤250MB，随机 Range 偏移+分块，间歇 0.5-5s
        └─ 随机写盘      205-307MB 分摊到两盘（下载全失败时也保证双盘有 I/O）
      → 汇总日志 → 随机间隔后进入下一轮
-     → 默认保留模式：文件留在 run 目录（占盘作为持续数据）；任一盘占用率 ≥40%
-       时下轮开始前清空保留目录（`DISK_RETAIN_FILES=false` 恢复用完即删）
+     → 磁盘双门控（阈值 40%）：基准占用（不含保活文件）≥40% → 本轮不生成任何文件
+       （下载直读直弃，网络指标照常完成）；总占用 ≥40% → 下轮开始前清空保留目录
+       （`DISK_RETAIN_FILES=false` 恢复用完即删）
 ```
 
 ### 反指纹（时间与行为随机化）
@@ -97,7 +98,7 @@ x86 实例同样可用（构建时自动交叉编译，无需改 Dockerfile）�
 | `ORACLE_KEEPER_DISK_WRITE_MB` | `256` | 额外写盘量 MB，0 关闭 |
 | `ORACLE_KEEPER_DISK_MIN_FREE_MB` | `2048` | 盘空闲低于此值跳过该盘 |
 | `ORACLE_KEEPER_DISK_RETAIN_FILES` | `true` | 保留模式：文件轮末不删除，高水位才清理 |
-| `ORACLE_KEEPER_DISK_PURGE_PERCENT` | `40` | 任一盘占用率 ≥ 此值时，下轮开始前清空保留的 run 目录 |
+| `ORACLE_KEEPER_DISK_PURGE_PERCENT` | `40` | 阈值双角色：基准占用（不含保活文件）≥ 此值 → 本轮不生成任何文件（下载直读直弃）；总占用 ≥ 此值 → 下轮开始前清空保留的 run 目录 |
 
 调参建议：
 

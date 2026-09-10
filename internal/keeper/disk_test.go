@@ -53,10 +53,11 @@ func TestRunDirLifecycle(t *testing.T) {
 	require.NoDirExists(t, dir)
 }
 
-// fakeUsage returns a diskUsage func reporting a fixed percentage.
+// fakeUsage returns a diskUsage func reporting a fixed percentage of a
+// 100-byte (fictional) volume — Total must be non-zero for baselinePct.
 func fakeUsage(pct float64) func(context.Context, string) (*disk.UsageStat, error) {
 	return func(_ context.Context, _ string) (*disk.UsageStat, error) {
-		return &disk.UsageStat{UsedPercent: pct}, nil
+		return &disk.UsageStat{Total: 100, UsedPercent: pct}, nil
 	}
 }
 
@@ -130,6 +131,38 @@ func TestDirSize(t *testing.T) {
 	require.Equal(t, int64(3500), dirSize(dir))
 	// Missing dir sizes to zero rather than erroring.
 	require.Zero(t, dirSize(filepath.Join(dir, "does-not-exist")))
+}
+
+func TestBaselinePct(t *testing.T) {
+	root := t.TempDir()
+	kpr := newPurgeKeeper(t, 0)
+	kpr.diskUsage = func(_ context.Context, _ string) (*disk.UsageStat, error) {
+		// 50% of 1000 fictional bytes used.
+		return &disk.UsageStat{Total: 1000, UsedPercent: 50}, nil
+	}
+	ctx := context.Background()
+
+	// No keeper files yet: baseline equals the reported usage.
+	require.InDelta(t, 50, kpr.baselinePct(ctx, root), 0.001)
+
+	// 100 bytes of ours in a run dir: baseline drops to 40.
+	dir := filepath.Join(root, "run-x")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "data.bin"), make([]byte, 100), 0o644))
+	require.InDelta(t, 40, kpr.baselinePct(ctx, root), 0.001)
+
+	// Foreign (non run-*) files are NOT subtracted — they are baseline. The
+	// fake usage stays at 50%, so the baseline remains 40 with them present.
+	foreign := filepath.Join(root, "unrelated")
+	require.NoError(t, os.MkdirAll(foreign, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(foreign, "biz.bin"), make([]byte, 50), 0o644))
+	require.InDelta(t, 40, kpr.baselinePct(ctx, root), 0.001)
+
+	// Our bytes exceeding used bytes clamps at zero rather than going negative.
+	kpr.diskUsage = func(_ context.Context, _ string) (*disk.UsageStat, error) {
+		return &disk.UsageStat{Total: 1000, UsedPercent: 5}, nil
+	}
+	require.InDelta(t, 0, kpr.baselinePct(ctx, root), 0.001)
 }
 
 func TestWritePass(t *testing.T) {

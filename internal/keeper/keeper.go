@@ -98,8 +98,22 @@ func (k *Keeper) Run(ctx context.Context) error {
 		k.purgeRoots(ctx, k.cfg.Disk.Roots, nil)
 		roots = k.prepareRoots(ctx) // a purged root may have become usable
 	}
-	var runDirs []string
+	// Baseline gate: a root whose usage EXCLUDING our files already sits at
+	// or above the threshold gets no new files this cycle — the volume is
+	// sufficiently occupied by real data, so the disk camouflage adds nothing.
+	// The network phase keeps running (streamed to /dev/null); only the
+	// write pass and file-backed downloads stand down.
+	var fileRoots []string
 	for _, root := range roots {
+		if base := k.baselinePct(ctx, root); base >= k.cfg.Disk.PurgePercent {
+			slog.Info("root baseline usage already at/above threshold, file generation skipped on it",
+				"root", root, "baseline_percent", base, "threshold_percent", k.cfg.Disk.PurgePercent)
+			continue
+		}
+		fileRoots = append(fileRoots, root)
+	}
+	var runDirs []string
+	for _, root := range fileRoots {
 		dir, err := makeRunDir(root)
 		if err != nil {
 			slog.Warn("temp dir creation failed", "root", root, "error", err)
@@ -116,8 +130,8 @@ func (k *Keeper) Run(ctx context.Context) error {
 		defer slog.Info("run files retained until disk high-water mark",
 			"dirs", runDirs, "purge_percent", k.cfg.Disk.PurgePercent)
 	}
-	if len(runDirs) == 0 {
-		slog.Warn("no usable temp root; network and disk-write phases skipped")
+	if len(runDirs) == 0 && (k.cfg.Net.TotalMB > 0 || k.cfg.Disk.WriteMB > 0) {
+		slog.Info("no file-writing root this cycle; downloads stream to /dev/null, disk write pass skipped")
 	}
 
 	res := k.runPhases(ctx, sample, runDirs, cores)
@@ -130,6 +144,9 @@ func (k *Keeper) Run(ctx context.Context) error {
 		fmt.Sprintf("net_hosts=%s", hostSummary(res.net)),
 		fmt.Sprintf("disk_write_mb=%.0f", mb(res.diskBytes)),
 	)
+	if res.net.discardedB > 0 {
+		parts = append(parts, fmt.Sprintf("net_discarded_mb=%.0f", mb(res.net.discardedB)))
+	}
 	if res.net.failures > 0 {
 		parts = append(parts, fmt.Sprintf("net_failures=%d", res.net.failures))
 	}
@@ -184,12 +201,14 @@ func (k *Keeper) runPhases(ctx context.Context, sample LoadSample, runDirs []str
 		res.memBytes = exerciseMemory(ctx, sample.MemTotal, sample.MemAvailable, k.cfg.Mem, burn)
 	}()
 
-	if len(runDirs) > 0 && k.cfg.Net.TotalMB > 0 {
+	if k.cfg.Net.TotalMB > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tasks := planDownloads(k.rng, k.sources, budget, int64(k.cfg.Net.MaxPerHostMB)*(1<<20))
-			slog.Info("network phase planned", "tasks", len(tasks), "hosts", len(k.sources))
+			slog.Info("network phase planned", "tasks", len(tasks), "hosts", len(k.sources),
+				"file_backed", len(runDirs) > 0)
+			// Empty runDirs = discard mode: fetch and drop without touching disk.
 			res.net = k.runDownloads(ctx, tasks, runDirs)
 		}()
 	}

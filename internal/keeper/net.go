@@ -154,18 +154,23 @@ func randInt64(rng *rand.Rand, lo, hi int64) int64 {
 
 // netStats aggregates the network phase outcome for the cycle summary.
 type netStats struct {
-	totalB   int64
-	perHostB map[string]int64
-	failures int
-	skipped  int
+	totalB int64
+	// discardedB counts bytes streamed straight to io.Discard — the network
+	// criterion is still exercised, but nothing touched the disk (every root
+	// was already at/above the baseline threshold).
+	discardedB int64
+	perHostB   map[string]int64
+	failures   int
+	skipped    int
 }
 
 // runDownloads executes planned tasks sequentially, rotating the destination
-// file across dirs (both disks), pausing 1-3s between requests. Sequential +
-// paused keeps per-host request rates trivially low.
+// file across dirs (both disks), pausing between requests. Sequential +
+// paused keeps per-host request rates trivially low. Empty dirs switches the
+// whole phase to discard mode: fetch and drop, no disk writes.
 func (k *Keeper) runDownloads(ctx context.Context, tasks []downloadTask, dirs []string) netStats {
 	stats := netStats{perHostB: make(map[string]int64, len(tasks))}
-	if len(tasks) == 0 || len(dirs) == 0 {
+	if len(tasks) == 0 {
 		return stats
 	}
 	client := &http.Client{} // per-request contexts bound duration
@@ -174,7 +179,11 @@ func (k *Keeper) runDownloads(ctx context.Context, tasks []downloadTask, dirs []
 			stats.skipped = len(tasks) - i
 			break
 		}
-		k.downloadOne(ctx, client, task, dirs[i%len(dirs)], &stats)
+		dir := ""
+		if len(dirs) > 0 {
+			dir = dirs[i%len(dirs)]
+		}
+		k.downloadOne(ctx, client, task, dir, &stats)
 		if i == len(tasks)-1 || ctx.Err() != nil {
 			break
 		}
@@ -191,9 +200,12 @@ func (k *Keeper) runDownloads(ctx context.Context, tasks []downloadTask, dirs []
 	return stats
 }
 
-// downloadOne fetches one task into dir, syncs it to disk, removes the file,
-// and records the byte count. Short reads (server closed early) still count
-// what arrived; only hard failures increment failures.
+// downloadOne fetches one task. A non-empty dir persists the payload as a
+// file (retained or removed per disk mode, always synced); an empty dir
+// streams to io.Discard so the network phase still completes when file
+// generation is skipped (every root's baseline usage already at/above the
+// threshold). Short reads still count what arrived; only hard failures
+// increment failures.
 func (k *Keeper) downloadOne(ctx context.Context, client *http.Client, task downloadTask, dir string, stats *netStats) {
 	start := time.Now()
 	reqCtx, cancel := context.WithTimeout(ctx, k.cfg.Net.RequestTimeout)
@@ -226,40 +238,52 @@ func (k *Keeper) downloadOne(ctx context.Context, client *http.Client, task down
 		return
 	}
 
-	path := filepath.Join(dir, fmt.Sprintf("dl-%s-%d.bin", task.src.name, time.Now().UnixNano()))
-	f, err := os.Create(path)
-	if err != nil {
-		slog.Warn("download: create temp file", "path", path, "error", err)
-		stats.failures++
-		return
+	var f *os.File
+	var path string
+	dst := io.Discard
+	if dir != "" {
+		path = filepath.Join(dir, fmt.Sprintf("dl-%s-%d.bin", task.src.name, time.Now().UnixNano()))
+		opened, err := os.Create(path)
+		if err != nil {
+			slog.Warn("download: create temp file", "path", path, "error", err)
+			stats.failures++
+			return
+		}
+		f = opened
+		dst = f
 	}
+
 	// CopyN caps the read even when the server ignores Range (plain 200).
-	n, copyErr := io.CopyN(f, resp.Body, task.wantB)
-	syncErr := f.Sync() // force dirty pages to the platter before removal
-	closeErr := f.Close()
+	n, copyErr := io.CopyN(dst, resp.Body, task.wantB)
+	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
+		logNetError(task, copyErr)
+	}
+	if f != nil {
+		if syncErr := f.Sync(); syncErr != nil { // flush to the platter before removal
+			slog.Warn("download: sync file", "path", path, "error", syncErr)
+		}
+		if closeErr := f.Close(); closeErr != nil {
+			slog.Warn("download: close file", "path", path, "error", closeErr)
+		}
+		// Retention mode keeps the file on disk (purged at the high-water
+		// mark); delete mode removes it right away — the run-dir cleanup is
+		// the backstop.
+		if !k.cfg.Disk.RetainFiles {
+			if removeErr := os.Remove(path); removeErr != nil {
+				slog.Warn("download: remove file", "path", path, "error", removeErr)
+			}
+		}
+	}
 
 	if n > 0 {
 		stats.totalB += n
 		stats.perHostB[task.src.name] += n
+		if f == nil {
+			stats.discardedB += n
+		}
 		d := time.Since(start)
 		slog.Info("download ok", "source", task.src.name, "mb", mb(n), "seconds", d.Seconds(),
-			"mbps", float64(n)/1e6/d.Seconds())
-	}
-	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
-		logNetError(task, copyErr)
-	}
-	if syncErr != nil {
-		slog.Warn("download: sync file", "path", path, "error", syncErr)
-	}
-	if closeErr != nil {
-		slog.Warn("download: close file", "path", path, "error", closeErr)
-	}
-	// Retention mode keeps the file on disk (purged at the high-water mark);
-	// delete mode removes it right away — the run-dir cleanup is the backstop.
-	if !k.cfg.Disk.RetainFiles {
-		if removeErr := os.Remove(path); removeErr != nil {
-			slog.Warn("download: remove file", "path", path, "error", removeErr)
-		}
+			"mbps", float64(n)/1e6/d.Seconds(), "discarded", f == nil)
 	}
 }
 

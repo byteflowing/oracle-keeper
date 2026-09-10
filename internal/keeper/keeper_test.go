@@ -82,13 +82,15 @@ func TestBurnCPU(t *testing.T) {
 	})
 }
 
-// newTestKeeper builds a Keeper with the fast load sampler used by the
-// full-cycle tests below.
+// newTestKeeper builds a Keeper with the fast load sampler and a low-usage
+// fake disk (the baseline gate must not block the test machine's real
+// 60-80%-full volumes). Tests needing other values override after.
 func newTestKeeper(t *testing.T, cfg *config.Config) *Keeper {
 	t.Helper()
 	kpr, err := New(cfg)
 	require.NoError(t, err)
 	kpr.loadSampleInterval = 50 * time.Millisecond
+	kpr.diskUsage = fakeUsage(20)
 	return kpr
 }
 
@@ -115,7 +117,7 @@ func TestRunSmoke(t *testing.T) {
 		CPU:  &config.CPUConfig{BurnDuration: 200 * time.Millisecond, Cores: 1, DutyCycle: 0.5},
 		Mem:  &config.MemConfig{AllocPercent: 0, MinFreePercent: 25},
 		Net:  &config.NetConfig{TotalMB: 0, MaxPerHostMB: 1, RequestTimeout: time.Second},
-		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: false},
+		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: false, PurgePercent: 40},
 	}
 	kpr := newTestKeeper(t, cfg)
 
@@ -156,6 +158,38 @@ func TestRunRetainsFiles(t *testing.T) {
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries, "retention mode must keep the run dir")
+}
+
+// TestRunSkipsFileGenerationWhenBaselineHigh pins the baseline gate: when the
+// root's usage WITHOUT our files already meets the threshold, the cycle must
+// not create any run dir or file at all.
+func TestRunSkipsFileGenerationWhenBaselineHigh(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full-cycle smoke test")
+	}
+
+	root := t.TempDir()
+	cfg := &config.Config{
+		Schedule: &config.ScheduleConfig{
+			Spec: "0 * * * *", Timezone: "UTC",
+			JitterMinutes: 0, MaxRunDuration: time.Minute,
+		},
+		Busy: idleBusyConfig(),
+		CPU:  &config.CPUConfig{BurnDuration: 200 * time.Millisecond, Cores: 1, DutyCycle: 0.5},
+		Mem:  &config.MemConfig{AllocPercent: 0, MinFreePercent: 25},
+		Net:  &config.NetConfig{TotalMB: 0, MaxPerHostMB: 1, RequestTimeout: time.Second},
+		Disk: &config.DiskConfig{Roots: []string{root}, WriteMB: 1, MinFreeMB: 0, RetainFiles: true, PurgePercent: 40},
+	}
+	kpr := newTestKeeper(t, cfg)
+	kpr.diskUsage = fakeUsage(50) // baseline 50% >= 40% -> no file generation
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, kpr.Run(ctx))
+
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	require.Empty(t, entries, "baseline-blocked cycle must not create anything")
 }
 
 // TestRunSkipsWhenBusy pins the yield-to-workload behavior: a busy host must
