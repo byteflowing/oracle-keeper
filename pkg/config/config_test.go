@@ -46,11 +46,11 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, 250, cfg.Net.MaxPerHostMB)
 	require.Equal(t, 5*time.Minute, cfg.Net.RequestTimeout)
 
-	require.Equal(t, []string{"/var/tmp/oracle-keeper", "/data/oracle-keeper"}, cfg.Disk.Roots)
+	require.Equal(t, []string{"/data/oracle-keeper"}, cfg.Disk.Roots)
 	require.Equal(t, 256, cfg.Disk.WriteMB)
 	require.Equal(t, uint64(2048), cfg.Disk.MinFreeMB)
 	require.True(t, cfg.Disk.RetainFiles)
-	require.InDelta(t, 40, cfg.Disk.PurgePercent, 0)
+	require.InDelta(t, 20, cfg.Disk.PurgePercent, 0)
 }
 
 func TestLoadEnvOverrides(t *testing.T) {

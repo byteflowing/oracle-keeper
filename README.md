@@ -14,14 +14,14 @@ Oracle Cloud 永久免费实例（Always Free）保活守护进程。针对 Orac
 ```
 上一轮结束 → 随机间隔 48-72 分钟后触发 → 随机 jitter 0-2min → 采样宿主机负载
   ├─ CPU% ≥ 40% 或 load1 ≥ 0.8×核数 → 宿主机忙，本轮跳过（业务负载本身就是保活）
-  └─ 空闲 → 两块盘各建临时目录 run-* → 并发执行（各量带随机抖动）：
+  └─ 空闲 → 在 /data/oracle-keeper 下建临时目录 run-* → 并发执行（各量带随机抖动）：
        ├─ CPU 自旋      全核 × 70% 占空比 × 3.5-7 分钟（30s 爬坡/回落，±30% 时长抖动）
        ├─ 内存触碰      30% 总内存，保持时长同本轮 CPU 自旋（保留 25% 余量，不足缩量/跳过）
        ├─ 多源下载      560-840MB，6 个源洗牌轮换，单源 ≤250MB，随机 Range 偏移+分块，间歇 0.5-5s
-       └─ 随机写盘      205-307MB 分摊到两盘（下载全失败时也保证双盘有 I/O）
+       └─ 随机写盘      205-307MB（下载全失败时也保证盘有 I/O）
      → 汇总日志 → 随机间隔后进入下一轮
-     → 磁盘双门控（阈值 40%）：基准占用（不含保活文件）≥40% → 本轮不生成任何文件
-       （下载直读直弃，网络指标照常完成）；总占用 ≥40% → 下轮开始前清空保留目录
+     → 磁盘双门控（阈值 20%）：基准占用（不含保活文件）≥20% → 本轮不生成任何文件
+       （下载直读直弃，网络指标照常完成）；总占用 ≥20% → 下轮开始前清空保留目录
        （`DISK_RETAIN_FILES=false` 恢复用完即删）
 ```
 
@@ -46,7 +46,8 @@ Oracle Cloud 永久免费实例（Always Free）保活守护进程。针对 Orac
 
 ## 部署（Docker）
 
-前置：宿主机 `/data` 是数据盘挂载点（不同的话在 `.env` 里设 `DATA_DIR`）。
+前置：无——默认单盘部署，所有文件写在宿主机 `/data/oracle-keeper` 一个目录里
+（`/data` 存在即可，普通目录；以后加数据盘再挂载并在 `DISK_ROOTS` 追加路径）。
 
 ```bash
 cd oracle-keeper
@@ -69,7 +70,7 @@ x86 实例同样可用（构建时自动交叉编译，无需改 Dockerfile）�
 |------|------|
 | **不要加 `mem_limit`** | 内存组件按宿主机总内存比例分配；容器限额会导致过量分配 → OOMKill |
 | **不要加 `cpus` 限制** | CPU 限额直接压低保活效果 |
-| 需要 root uid 写挂载目录 | 两个宿主机临时目录由 Docker 以 root 创建；compose 已 `cap_drop: [ALL]` + `no-new-privileges`，容器只剩"写两个目录 + 出网"的能力 |
+| 需要 root uid 写挂载目录 | 宿主机 `/data/oracle-keeper` 由 Docker 以 root 创建；compose 已 `cap_drop: [ALL]` + `no-new-privileges`，容器只剩"写这一个目录 + 出网"的能力 |
 | `/proc` 需为宿主机视角 | 标准 Docker 满足；若宿主机装了 lxcfs 虚拟化 /proc，忙检测会退化为容器视角，需去掉 lxcfs 或改用 host network |
 
 ## 配置
@@ -94,11 +95,11 @@ x86 实例同样可用（构建时自动交叉编译，无需改 Dockerfile）�
 | `ORACLE_KEEPER_NET_TOTAL_MB` | `700` | 每轮下载预算 MB（±20% 抖动），0 关闭 |
 | `ORACLE_KEEPER_NET_MAX_PER_HOST_MB` | `250` | 单源单轮上限 MB |
 | `ORACLE_KEEPER_NET_REQUEST_TIMEOUT` | `5m` | 单请求超时 |
-| `ORACLE_KEEPER_DISK_ROOTS` | `/var/tmp/oracle-keeper,/data/oracle-keeper` | 双盘临时根目录 |
+| `ORACLE_KEEPER_DISK_ROOTS` | `/data/oracle-keeper` | 临时文件根目录（所有文件都在这一个目录里；多盘可列多个自动分摊） |
 | `ORACLE_KEEPER_DISK_WRITE_MB` | `256` | 额外写盘量 MB，0 关闭 |
 | `ORACLE_KEEPER_DISK_MIN_FREE_MB` | `2048` | 盘空闲低于此值跳过该盘 |
 | `ORACLE_KEEPER_DISK_RETAIN_FILES` | `true` | 保留模式：文件轮末不删除，高水位才清理 |
-| `ORACLE_KEEPER_DISK_PURGE_PERCENT` | `40` | 阈值双角色：基准占用（不含保活文件）≥ 此值 → 本轮不生成任何文件（下载直读直弃）；总占用 ≥ 此值 → 下轮开始前清空保留的 run 目录 |
+| `ORACLE_KEEPER_DISK_PURGE_PERCENT` | `20` | 阈值双角色：基准占用（不含保活文件）≥ 此值 → 本轮不生成任何文件（下载直读直弃）；总占用 ≥ 此值 → 下轮开始前清空保留的 run 目录 |
 
 调参建议：
 

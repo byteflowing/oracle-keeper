@@ -107,14 +107,15 @@ type NetConfig struct {
 	Sources []string
 }
 
-// DiskConfig controls temp directories across the mounted disks. Oracle
-// boxes typically have two volumes (root and /data) — roots default to one
-// directory on each so both spindles see writes and frees.
+// DiskConfig controls temp directories for keeper files. The default is a
+// single /data root — everything the keeper writes lives under that one
+// directory. List several roots — one per mounted volume — and writes
+// spread across them automatically.
 type DiskConfig struct {
 	// Roots are parent directories for per-cycle temp dirs.
-	Roots []string `default:"/var/tmp/oracle-keeper,/data/oracle-keeper"`
+	Roots []string `default:"/data/oracle-keeper"`
 	// WriteMB is an extra random-data write pass split across roots,
-	// guaranteeing disk I/O on every root even if downloads fail; 0 disables.
+	// guaranteeing disk I/O every cycle even if downloads fail; 0 disables.
 	WriteMB int `default:"256"`
 	// MinFreeMB: roots with less free space are skipped for that cycle.
 	MinFreeMB uint64 `default:"2048"`
@@ -124,12 +125,13 @@ type DiskConfig struct {
 	// criteria do not include storage, so this is optional hardening, not a
 	// criterion requirement.
 	RetainFiles bool `default:"true"`
-	// PurgePercent is the per-root used-percentage high watermark: when a
-	// root is fuller than this at cycle start, all retained run dirs are
-	// purged. 40 leaves the majority of the volume for real workloads while
-	// still amortizing purges; raise it if business data normally sits
-	// above this level (the purge only ever deletes our own run dirs).
-	PurgePercent float64 `default:"40"`
+	// PurgePercent is the per-root used-percentage threshold with two
+	// roles: (1) baseline — usage EXCLUDING keeper files at/above it means
+	// the volume is already occupied by real data, so no files are
+	// generated at all; (2) high-water mark — total usage at/above it
+	// purges retained run dirs next cycle. 20 keeps keeper writes a small
+	// minority of the volume so business write throughput is unaffected.
+	PurgePercent float64 `default:"20"`
 }
 
 // Load reads config from the standard configx locations (env > file >
