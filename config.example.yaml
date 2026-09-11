@@ -11,8 +11,10 @@ schedule:
   # 2) 固定 cron（spec 非空）：经典 5 字段表达式，可预期但指纹明显，仅在需要确定性时使用
   # 注意：此键必须在文件中出现（哪怕是空串），环境变量覆盖才会生效
   spec: ""
-  # interval_min: 48m
-  # interval_max: 72m
+  # 随机间隔上下限：默认 30-95 分钟（均值约 1h，另有 12% 概率抽到 8-20 分钟
+  # 的"短跟进"），间隔序列无固定周期；范围太窄在监控图上会显得等距
+  # interval_min: 30m
+  # interval_max: 95m
   # cron 时区（固定 cron 模式用）
   # timezone: "Asia/Shanghai"
   # 每轮触发后再随机延迟 0..N 分钟

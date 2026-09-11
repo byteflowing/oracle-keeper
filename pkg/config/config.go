@@ -51,9 +51,11 @@ type ScheduleConfig struct {
 	// randomized-interval mode described above.
 	Spec string
 	// IntervalMin/IntervalMax bound the uniform random gap between cycles
-	// (interval mode only). Defaults average to ~1h.
-	IntervalMin time.Duration `default:"48m"`
-	IntervalMax time.Duration `default:"72m"`
+	// (interval mode only). The wide default range (30-95m, mean ~1h) plus a
+	// built-in short follow-up lottery keeps the spike series aperiodic —
+	// narrow ranges look metronomic on utilization graphs.
+	IntervalMin time.Duration `default:"30m"`
+	IntervalMax time.Duration `default:"95m"`
 	// Timezone for cron expression evaluation (fixed-cron mode only).
 	Timezone string `default:"Asia/Shanghai"`
 	// JitterMinutes is the upper bound of the random delay applied after a

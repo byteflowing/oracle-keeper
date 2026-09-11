@@ -62,24 +62,80 @@ func TestExerciseMemory(t *testing.T) {
 }
 
 func TestBurnCPU(t *testing.T) {
+	shape := cpuShape{duty: 0.5, ramp: 50 * time.Millisecond, wobbleAmp: 0.3, wobblePeriod: 300 * time.Millisecond}
+
 	t.Run("accumulates bounded busy time", func(t *testing.T) {
-		// 2 workers × 600ms × 0.5 duty ≈ 0.6s; the ramp envelope (150ms in
-		// and out here) only trims the edges, and the deadline check bounds
-		// any overshoot.
-		busy := burnCPU(context.Background(), 2, 0.5, 600*time.Millisecond)
-		require.Greater(t, busy, 0.15)
-		require.LessOrEqual(t, busy, 1.0)
+		// 2 workers × 600ms; duty wobbles within [0.2, 0.8] and the ramp
+		// trims the edges — busy seconds stay well inside these bounds.
+		busy := burnCPU(context.Background(), 2, 600*time.Millisecond, shape)
+		require.Greater(t, busy, 0.1)
+		require.LessOrEqual(t, busy, 1.3)
 	})
 
 	t.Run("cancellation stops immediately", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		require.Zero(t, burnCPU(ctx, 2, 0.5, time.Minute))
+		require.Zero(t, burnCPU(ctx, 2, time.Minute, shape))
 	})
 
 	t.Run("zero duration disabled", func(t *testing.T) {
-		require.Zero(t, burnCPU(context.Background(), 2, 0.5, 0))
+		require.Zero(t, burnCPU(context.Background(), 2, 0, shape))
 	})
+}
+
+func TestDutyAt(t *testing.T) {
+	s := cpuShape{duty: 0.8, ramp: 10 * time.Second, wobbleAmp: 0.3, wobblePeriod: 60 * time.Second, wobblePhase: 0}
+
+	t.Run("mid-burn sits within wobble band", func(t *testing.T) {
+		d := s.dutyAt(30*time.Second, 30*time.Second)
+		require.GreaterOrEqual(t, d, 0.8*0.7)
+		require.LessOrEqual(t, d, 0.8*1.3)
+	})
+
+	t.Run("edges ramp toward zero", func(t *testing.T) {
+		start := s.dutyAt(1*time.Second, 59*time.Second)
+		mid := s.dutyAt(30*time.Second, 30*time.Second)
+		require.Less(t, start, mid)
+	})
+
+	t.Run("always clamped to (0,1]", func(t *testing.T) {
+		wide := cpuShape{duty: 0.95, wobbleAmp: 0.9, wobblePeriod: time.Second, wobblePhase: 0}
+		for e := range 10 {
+			d := wide.dutyAt(time.Duration(e)*100*time.Millisecond, time.Minute)
+			require.Greater(t, d, 0.0)
+			require.LessOrEqual(t, d, 1.0)
+		}
+	})
+}
+
+// TestNextCycleGap pins the gap lottery: draws stay inside the configured
+// range except for the short follow-up branch, which fires often enough to
+// be visible in a series.
+func TestNextCycleGap(t *testing.T) {
+	cfg := &config.Config{
+		Schedule: &config.ScheduleConfig{IntervalMin: 30 * time.Minute, IntervalMax: 95 * time.Minute},
+		Busy:     &config.BusyConfig{CPUPercent: 100, LoadFactor: 1e6},
+		CPU:      &config.CPUConfig{},
+		Mem:      &config.MemConfig{},
+		Net:      &config.NetConfig{RequestTimeout: time.Second},
+		Disk:     &config.DiskConfig{Roots: []string{t.TempDir()}},
+	}
+	kpr, err := New(cfg)
+	require.NoError(t, err)
+
+	shorts := 0
+	for range 1000 {
+		gap := kpr.NextCycleGap(30*time.Minute, 95*time.Minute)
+		require.GreaterOrEqual(t, gap, 8*time.Minute)
+		if gap < 30*time.Minute {
+			shorts++
+			require.LessOrEqual(t, gap, 20*time.Minute)
+		} else {
+			require.LessOrEqual(t, gap, 95*time.Minute)
+		}
+	}
+	require.Greater(t, shorts, 30, "short follow-up gaps should occur (~12%)")
+	require.Less(t, shorts, 250)
 }
 
 // newTestKeeper builds a Keeper with the fast load sampler and a low-usage

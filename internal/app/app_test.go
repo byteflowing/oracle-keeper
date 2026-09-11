@@ -41,9 +41,10 @@ func TestIntervalModeSchedulesWithinBounds(t *testing.T) {
 	entries := a.cron.Entries()
 	require.NotEmpty(t, entries)
 
-	// Next fire is 48-72m out — not aligned to any wall-clock hour.
+	// Next fire is a gap draw: uniform 48-72m here, or a short follow-up
+	// (8-20m) from the lottery — never aligned to wall-clock hours.
 	delay := time.Until(entries[0].Next)
-	require.GreaterOrEqual(t, delay, 47*time.Minute)
+	require.GreaterOrEqual(t, delay, 7*time.Minute)
 	require.LessOrEqual(t, delay, 73*time.Minute)
 
 	done := make(chan error, 1)
@@ -68,7 +69,7 @@ func TestIntervalModeReschedulesAfterCycle(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.NotEqual(t, oldID, entries[0].ID, "runCycle must replace the interval entry")
 	delay := time.Until(entries[0].Next)
-	require.GreaterOrEqual(t, delay, 47*time.Minute)
+	require.GreaterOrEqual(t, delay, 7*time.Minute) // short follow-ups allowed
 	require.LessOrEqual(t, delay, 73*time.Minute)
 
 	require.NoError(t, a.Stop())

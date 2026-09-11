@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -165,24 +166,59 @@ type phaseResults struct {
 	diskBytes  int64
 }
 
+// NextCycleGap draws the gap to the next cycle: uniform in [lo, hi], with a
+// small chance of a short "follow-up" gap instead — the resulting series has
+// occasional close pairs and long holes instead of a metronomic period.
+func (k *Keeper) NextCycleGap(lo, hi time.Duration) time.Duration {
+	if k.rng.Float64() < shortGapChance {
+		return k.NextInterval(shortGapMin, shortGapMax)
+	}
+	return k.NextInterval(lo, hi)
+}
+
+// Short follow-up gaps and their probability. 8-20 minutes after a cycle
+// ends looks like a retry or a second batch of work.
+const (
+	shortGapChance = 0.12
+	shortGapMin    = 8 * time.Minute
+	shortGapMax    = 20 * time.Minute
+)
+
 // runPhases executes the CPU burn, memory hold, downloads, and disk write
 // pass concurrently under one context, then waits for all of them. The
 // network phase doubles as disk I/O: download files rotate across runDirs.
-// Phase durations/volumes are jittered per cycle (burn ±30%, disk write
-// ±20%, network budget ±20%) so repeated cycles never produce identical
-// activity signatures.
+// Every phase's magnitude AND the burn's shape (duty, cores, wobble,
+// single vs split burst) are randomized per cycle so consecutive spikes
+// never repeat the same footprint on a utilization graph.
 func (k *Keeper) runPhases(ctx context.Context, sample LoadSample, runDirs []string, cores int) phaseResults {
 	var res phaseResults
 	res.net.perHostB = make(map[string]int64)
 
-	burn := k.NextInterval(k.cfg.CPU.BurnDuration*7/10, k.cfg.CPU.BurnDuration*14/10)
+	burn := k.NextInterval(k.cfg.CPU.BurnDuration*6/10, k.cfg.CPU.BurnDuration*16/10)
+	burnCores := cores
+	if k.cfg.CPU.Cores == 0 { // unpinned: vary the height via worker count
+		half := (cores + 1) / 2
+		burnCores = half + int(k.rng.Int64N(int64(cores-half)+1))
+	}
+	shape := cpuShape{
+		duty:         clampDuty(k.cfg.CPU.DutyCycle * (0.65 + k.rng.Float64()*0.6)),
+		ramp:         min(75*time.Second, burn/4),
+		wobbleAmp:    0.2 + k.rng.Float64()*0.2,
+		wobblePeriod: k.NextInterval(45*time.Second, 120*time.Second),
+		wobblePhase:  k.rng.Float64() * 2 * math.Pi,
+	}
+	// 30% of cycles split the burn into two bursts with a pause — a single
+	// rectangle is the most recognizable synthetic signature.
+	split := k.rng.Float64() < 0.3
+
 	writeTotal := int64(k.cfg.Disk.WriteMB) * (1 << 20)
 	if writeTotal > 0 {
 		writeTotal = randInt64(k.rng, writeTotal*8/10, writeTotal*12/10)
 	}
 	budget := jitterBudget(k.rng, int64(k.cfg.Net.TotalMB)*(1<<20))
 	slog.Info("cycle plan",
-		"cpu_burn", burn.Round(time.Second),
+		"cpu_burn", burn.Round(time.Second), "cpu_cores", burnCores,
+		"cpu_duty", math.Round(shape.duty*100)/100, "split_burst", split,
 		"mem_hold", burn.Round(time.Second),
 		"net_budget_mb", mb(budget),
 		"disk_write_mb", mb(writeTotal))
@@ -192,7 +228,21 @@ func (k *Keeper) runPhases(ctx context.Context, sample LoadSample, runDirs []str
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		res.cpuSeconds = burnCPU(ctx, cores, k.cfg.CPU.DutyCycle, burn)
+		if !split {
+			res.cpuSeconds = burnCPU(ctx, burnCores, burn, shape)
+			return
+		}
+		first := burn * 6 / 10
+		res.cpuSeconds = burnCPU(ctx, burnCores, first, shape)
+		pause := k.NextInterval(burn/4, burn) // scales with the burst size
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		res.cpuSeconds += burnCPU(ctx, burnCores, burn-first, shape)
 	}()
 
 	wg.Add(1)
@@ -223,6 +273,17 @@ func (k *Keeper) runPhases(ctx context.Context, sample LoadSample, runDirs []str
 
 	wg.Wait()
 	return res
+}
+
+// clampDuty bounds a duty cycle to the usable range.
+func clampDuty(d float64) float64 {
+	if d < 0.1 {
+		return 0.1
+	}
+	if d > 0.95 {
+		return 0.95
+	}
+	return d
 }
 
 // jitterSleep waits a random 0..JitterMinutes so cycles don't always fire on

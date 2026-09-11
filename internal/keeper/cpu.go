@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"crypto/sha256"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,25 +17,58 @@ const cpuCycle = 200 * time.Millisecond
 // rounds dominate (real ALU work, not loop overhead).
 var cpuChunk = make([]byte, 64*1024)
 
-// burnCPU spins `cores` workers hashing cpuChunk with the given duty cycle
-// until d elapses or ctx is cancelled, and returns the total busy-seconds
-// accumulated across all workers.
-//
-// The duty ramps in and out over cpuRampTime instead of switching on and off
-// at full intensity — an abrupt constant burst that stops dead looks like a
-// load generator; a short ramp resembles an ordinary batch job spinning up
-// and winding down.
-func burnCPU(ctx context.Context, cores int, duty float64, d time.Duration) float64 {
+// cpuShape captures the per-cycle burn texture. Every field is randomized
+// per cycle by runPhases so consecutive spikes differ in height, slope, and
+// top texture — identical rectangles are the most obvious synthetic pattern
+// on a utilization graph.
+type cpuShape struct {
+	duty float64 // base busy fraction for this cycle
+	ramp time.Duration
+	// Wobble modulates the plateau with a slow sine so the top is a rolling
+	// hill rather than a flat mesa (visible at 1-min monitoring granularity).
+	wobbleAmp    float64       // 0..~0.4
+	wobblePeriod time.Duration // tens of seconds
+	wobblePhase  float64       // radians
+}
+
+// dutyAt returns the effective busy fraction at a given point in the burn,
+// combining the symmetric ramp envelope (rise and fall) and the wobble.
+// Shared across workers (computed from the clock, not per-goroutine state)
+// so host-level utilization actually oscillates instead of averaging out.
+func (s cpuShape) dutyAt(elapsed, remaining time.Duration) float64 {
+	envelope := 1.0
+	if s.ramp > 0 {
+		up := elapsed.Seconds() / s.ramp.Seconds()
+		down := remaining.Seconds() / s.ramp.Seconds()
+		envelope = math.Min(math.Min(up, down), 1)
+	}
+	wobble := 1.0
+	if s.wobblePeriod > 0 && s.wobbleAmp > 0 {
+		wobble = 1 + s.wobbleAmp*math.Sin(2*math.Pi*elapsed.Seconds()/s.wobblePeriod.Seconds()+s.wobblePhase)
+	}
+	d := s.duty * envelope * wobble
+	if d < 0.05 {
+		return 0.05
+	}
+	if d > 1 {
+		return 1
+	}
+	return d
+}
+
+// burnCPU spins `cores` workers hashing cpuChunk following the shape's duty
+// curve until d elapses or ctx is cancelled, and returns the total
+// busy-seconds accumulated across all workers.
+func burnCPU(ctx context.Context, cores int, d time.Duration, s cpuShape) float64 {
 	if cores <= 0 || d <= 0 {
 		return 0
 	}
-	if duty <= 0 {
-		duty = 0.05
+	if s.duty <= 0 {
+		s.duty = 0.05
 	}
-	if duty > 1 {
-		duty = 1
+	if s.duty > 1 {
+		s.duty = 1
 	}
-	ramp := min(30*time.Second, d/4)
 
 	var busyNanos atomic.Int64
 	start := time.Now()
@@ -50,14 +84,7 @@ func burnCPU(ctx context.Context, cores int, duty float64, d time.Duration) floa
 				if ctx.Err() != nil {
 					return
 				}
-				elapsed := time.Since(start)
-				remaining := time.Until(deadline)
-				envelope := 1.0
-				if ramp > 0 {
-					envelope = min(float64(elapsed)/float64(ramp), float64(remaining)/float64(ramp), 1)
-				}
-				dutyNow := duty * envelope
-				busy := time.Duration(float64(cpuCycle) * dutyNow)
+				busy := time.Duration(float64(cpuCycle) * s.dutyAt(time.Since(start), time.Until(deadline)))
 				spinStart := time.Now()
 				for time.Since(spinStart) < busy && time.Now().Before(deadline) {
 					if ctx.Err() != nil {

@@ -125,7 +125,7 @@ func (a *App) scheduleNext() error {
 		a.cron.Remove(a.entry)
 		a.hasEntry = false
 	}
-	gap := a.kpr.NextInterval(a.schedule.IntervalMin, a.schedule.IntervalMax)
+	gap := a.kpr.NextCycleGap(a.schedule.IntervalMin, a.schedule.IntervalMax)
 	id, err := a.cron.AddFunc("@every "+gap.String(), a.runCycle)
 	if err != nil {
 		return fmt.Errorf("schedule next interval %s: %w", gap, err)

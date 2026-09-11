@@ -44,8 +44,8 @@ func TestLoadDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Empty(t, cfg.Schedule.Spec) // empty = randomized interval mode
-	require.Equal(t, 48*time.Minute, cfg.Schedule.IntervalMin)
-	require.Equal(t, 72*time.Minute, cfg.Schedule.IntervalMax)
+	require.Equal(t, 30*time.Minute, cfg.Schedule.IntervalMin)
+	require.Equal(t, 95*time.Minute, cfg.Schedule.IntervalMax)
 	require.Equal(t, 2, cfg.Schedule.JitterMinutes)
 	require.Equal(t, 45*time.Minute, cfg.Schedule.MaxRunDuration)
 
