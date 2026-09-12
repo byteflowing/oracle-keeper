@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/servekit/go-common/configx"
-	"github.com/servekit/go-common/logging"
+	"github.com/yanrongliang/go-common/configx"
+	"github.com/yanrongliang/go-common/logging"
 )
 
 const (

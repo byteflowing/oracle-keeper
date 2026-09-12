@@ -11,7 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/servekit/go-common/dbx"
+	"github.com/yanrongliang/go-common/dbx"
 
 	"github.com/servekit/oracle-keeper/pkg/config"
 )

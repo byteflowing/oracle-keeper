@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/servekit/go-common v0.0.0-20260907134535-5a601f9f7499
+	github.com/yanrongliang/go-common v0.0.0-20260907134535-5a601f9f7499
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/stretchr/testify v1.11.1
 	gorm.io/gorm v1.31.1
@@ -97,3 +97,4 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
 )
+replace github.com/yanrongliang/go-common => ../go-common

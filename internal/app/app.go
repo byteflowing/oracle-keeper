@@ -15,7 +15,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/servekit/go-common/cronx"
+	"github.com/yanrongliang/go-common/cronx"
 
 	"github.com/servekit/oracle-keeper/internal/keeper"
 	"github.com/servekit/oracle-keeper/pkg/config"

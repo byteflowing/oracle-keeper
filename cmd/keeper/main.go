@@ -16,8 +16,8 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/servekit/go-common/logging"
-	"github.com/servekit/go-common/signalx"
+	"github.com/yanrongliang/go-common/logging"
+	"github.com/yanrongliang/go-common/signalx"
 
 	"github.com/servekit/oracle-keeper/internal/app"
 	"github.com/servekit/oracle-keeper/internal/keeper"
